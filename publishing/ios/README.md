@@ -17,9 +17,9 @@ A copy-paste recipe. Total active human time: ~90 min spread across ~3 days (rev
 | Title, subtitle, description, keywords | [`store-listing.md`](store-listing.md) | 6.3 |
 | App Privacy form answers | [`app-privacy.md`](app-privacy.md) | 5.4 |
 | Info.plist usage descriptions | [`info-plist-additions.txt`](info-plist-additions.txt) | 4.1 |
-| Privacy policy URL | <https://mayerwin.github.io/Chained-Timers/privacy.html> | 6.3 |
-| Support URL | <https://github.com/mayerwin/Chained-Timers/issues> | 6.3 |
-| Marketing URL (optional) | <https://mayerwin.github.io/Chained-Timers/> | 6.3 |
+| Privacy policy URL | <https://chainedtimers.github.io/privacy.html> | 6.3 |
+| Support URL | <https://github.com/chainedtimers/chainedtimers.github.io/issues> | 6.3 |
+| Marketing URL (optional) | <https://chainedtimers.github.io/> | 6.3 |
 | Bundle identifier | `com.github.chainedtimers` (already set) | 5.2 |
 | App Store IPA build script | [`3-build-app-store-ipa.sh`](3-build-app-store-ipa.sh) + [`ExportOptions.plist`](ExportOptions.plist) | 7.2 |
 
@@ -54,7 +54,7 @@ Verify: `pod --version` should print `1.x.x`.
 ## 3. Scaffold the iOS project (one-time, ~3 min)
 
 ```bash
-git clone https://github.com/mayerwin/Chained-Timers.git
+git clone https://github.com/chainedtimers/chainedtimers.github.io.git
 cd Chained-Timers
 npm install
 npm run cap:add:ios       # generates ios/ folder, runs pod install
@@ -142,7 +142,7 @@ Xcode will provision the signing certificates automatically. If it complains, cl
 Left sidebar → **App Information**.
 
 - **Subtitle**: paste from [`store-listing.md`](store-listing.md) §"Subtitle"
-- **Privacy Policy URL**: <https://mayerwin.github.io/Chained-Timers/privacy.html>
+- **Privacy Policy URL**: <https://chainedtimers.github.io/privacy.html>
 - **Category**:
   - Primary: **Health & Fitness**
   - Secondary: **Productivity**
@@ -188,10 +188,10 @@ Paste from [`store-listing.md`](store-listing.md) §"Description".
 Paste from [`store-listing.md`](store-listing.md) §"Keywords".
 
 ### 6.7 Support URL
-<https://github.com/mayerwin/Chained-Timers/issues>
+<https://github.com/chainedtimers/chainedtimers.github.io/issues>
 
 ### 6.8 Marketing URL (optional)
-<https://mayerwin.github.io/Chained-Timers/>
+<https://chainedtimers.github.io/>
 
 ### 6.9 Screenshots
 Scroll to the **App Previews and Screenshots** section.
@@ -292,7 +292,7 @@ Then upload the `.ipa` via [Transporter](https://apps.apple.com/app/transporter/
 ### 8.2 If rejected
 - Apple emails the reason. Common ones for our app:
   - **2.5.1 Background modes misuse**: only if you ticked "Audio" in Background Modes for the silent-audio keep-alive trick. Solution: untick that capability, document the iOS limit honestly. The app already does this in the in-app iOS notice.
-  - **5.1.1 Privacy policy missing or unclear**: shouldn't happen — our policy is at <https://mayerwin.github.io/Chained-Timers/privacy.html> and is verbatim "we collect nothing." Re-confirm the URL is correct.
+  - **5.1.1 Privacy policy missing or unclear**: shouldn't happen — our policy is at <https://chainedtimers.github.io/privacy.html> and is verbatim "we collect nothing." Re-confirm the URL is correct.
 - Reply via the Resolution Center with the fix; usually re-reviewed within 24h.
 
 ### 8.3 If approved with manual release

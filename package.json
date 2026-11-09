@@ -4,10 +4,10 @@
   "description": "The interval forge — a small, fast, installable PWA that sequences timers into named chains. Native-shell builds via Capacitor.",
   "private": true,
   "license": "MIT",
-  "homepage": "https://mayerwin.github.io/Chained-Timers/",
+  "homepage": "https://chainedtimers.github.io/",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mayerwin/Chained-Timers.git"
+    "url": "https://github.com/chainedtimers/chainedtimers.github.io.git"
   },
   "scripts": {
     "serve": "node tools/serve.mjs",

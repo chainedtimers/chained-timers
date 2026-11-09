@@ -51,7 +51,7 @@ The app requests three permissions: notifications, exact alarms, and a foregroun
 
 Templates included: Tabata, EMOM 10, Boxing Rounds, Pomodoro, Plank Stack, Box Breath. Tap any to fork into your library, then customise freely.
 
-Open source: github.com/mayerwin/Chained-Timers
+Open source: github.com/chainedtimers/chainedtimers.github.io
 ```
 
 ---

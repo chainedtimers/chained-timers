@@ -2,7 +2,7 @@
 # Build + upload the Play Store AAB to ALL tracks, including production.
 #
 # Thin wrapper over 4-publish-to-play.ps1 -- just adds `production` to
-# the track list. The same AAB lands on internal, closed testing, and
+# the track list. The same AAB lands on internal, both closed tracks, and
 # production simultaneously: upload once via publishBundle, copy to the
 # remaining tracks via promoteArtifact.
 #
@@ -21,7 +21,7 @@ $ErrorActionPreference = 'Stop'
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-$env:PLAY_TRACKS = 'internal,alpha,production'
+$env:PLAY_TRACKS = 'internal,alpha,self-service,production'
 
 & (Join-Path $here '4-publish-to-play.ps1')
 exit $LASTEXITCODE

@@ -7,9 +7,9 @@ you're starting from a fresh clone of this repository on a development machine.
 > **Why is this not already done?** Sideload distribution costs $0 and needs no
 > external account. Store distribution requires paid developer accounts and a
 > non-trivial amount of metadata work that pays off only if you intend to
-> publicly distribute. The PWA at <https://mayerwin.github.io/Chained-Timers/>
+> publicly distribute. The PWA at <https://chainedtimers.github.io/>
 > is free for anyone to use today and the Android APK on the
-> [Releases page](https://github.com/mayerwin/Chained-Timers/releases) is one
+> [Releases page](https://github.com/chainedtimers/chainedtimers.github.io/releases) is one
 > click away on Android.
 
 ---
@@ -38,7 +38,7 @@ written and hosted.
 Quick options:
 
 - **GitHub Pages page** in this repo: this is what we ship — the file at [`privacy.html`](privacy.html) is served by GitHub Pages at
-  <https://mayerwin.github.io/Chained-Timers/privacy.html>. Edit there if you ever need to update.
+  <https://chainedtimers.github.io/privacy.html>. Edit there if you ever need to update.
 - **Free generators**: <https://www.freeprivacypolicy.com/>,
   <https://app-privacy-policy-generator.firebaseapp.com/>.
 
@@ -69,17 +69,17 @@ Permissions we request:
 We have no analytics SDK, no crash reporter, no ads, no third-party
 trackers, no remote config, and no account system.
 
-For questions, open an issue at https://github.com/mayerwin/Chained-Timers
+For questions, open an issue at https://github.com/chainedtimers/chainedtimers.github.io
 ```
 
 ### 2. Support URL
 
 A public page where users can reach you. The repo's GitHub Issues page
-(`https://github.com/mayerwin/Chained-Timers/issues`) is sufficient.
+(`https://github.com/chainedtimers/chainedtimers.github.io/issues`) is sufficient.
 
 ### 3. Marketing URL (optional but recommended)
 
-The PWA itself works fine: `https://mayerwin.github.io/Chained-Timers/`
+The PWA itself works fine: `https://chainedtimers.github.io/`
 
 ### 4. App icon — already done
 
@@ -263,7 +263,7 @@ Bump `versionCode` (must increase) and `versionName` in `android/app/build.gradl
 ### Scaffold the iOS project (one-time on a Mac)
 
 ```bash
-git clone https://github.com/mayerwin/Chained-Timers.git
+git clone https://github.com/chainedtimers/chainedtimers.github.io.git
 cd Chained-Timers
 npm install
 npm run cap:add:ios       # generates the ios/ folder + runs pod install

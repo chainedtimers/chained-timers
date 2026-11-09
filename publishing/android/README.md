@@ -5,6 +5,18 @@ A copy-paste recipe. Total active human time: ~45 min spread across ~10 days (re
 > **Cost**: $25, one-time, lifetime developer account. No revenue share applies because the app is free.
 > **Outcome**: app goes live on Play Store with in-place updates from this point forward.
 
+## Current closed beta and family signup
+
+As of October 10, 2026, the existing **Alpha** email-list test is preserved, including its two opted-in testers. A separate closed track named **`self-service`** (Console track ID `4701264733771156618`) has been created for the shared **Erwin Mayer Labs Beta** group. Its version **1.4.24, code 43** reuses the existing Alpha bundle and has been **submitted for Google checks and review**. Console shows **Changes in review**, with automated quick checks before review. Activation remains pending; no further manual submission is required now. Existing Alpha access is unchanged. These instructions apply once the new track is active.
+
+1. Join [Erwin Mayer Labs Beta](https://groups.google.com/g/erwin-mayer-labs-beta) with the Google account you use for Google Play.
+2. Open the [Chained Timers beta invitation](https://play.google.com/apps/testing/com.github.chainedtimers) and choose to become a tester.
+3. Follow the Play Store link and install Chained Timers on your Android device using that same account. No debugging, sideloading, or public issue containing your email is needed.
+
+The shared group can grant access to multiple apps, but each app has its own opt-in link and testing period. Existing Alpha testers should **remain opted in**; they do not need to leave or rejoin to preserve their current test participation. Someone enrolled in this app's internal test must leave internal testing before joining closed testing. Where Google's new-personal-account rule applies, each app needs at least 12 testers continuously opted in for 14 days before applying for production access. [Official testing setup](https://support.google.com/googleplay/android-developer/answer/9845334) and [testing requirements](https://support.google.com/googleplay/android-developer/answer/14151465).
+
+Release scripts target both closed tracks so existing Alpha testers and new group members receive the same updates. Keep `alpha` and `self-service` when overriding the track list unless intentionally releasing to only one cohort. The setup below remains the initial publishing reference.
+
 ---
 
 ## 0. Pre-flight (before you open the Play Console)
@@ -18,9 +30,9 @@ A copy-paste recipe. Total active human time: ~45 min spread across ~10 days (re
 | Data safety form answers | [`data-safety.md`](data-safety.md) | 4.5 |
 | Content rating answers | [`content-rating.md`](content-rating.md) | 4.4 |
 | `USE_EXACT_ALARM` justification | [`permissions-declaration.md`](permissions-declaration.md) | 6.3 |
-| Privacy policy URL | <https://mayerwin.github.io/Chained-Timers/privacy.html> | 5.3 |
-| Support URL | <https://github.com/mayerwin/Chained-Timers/issues> | 5.3 |
-| Marketing URL (optional) | <https://mayerwin.github.io/Chained-Timers/> | 5.3 |
+| Privacy policy URL | <https://chainedtimers.github.io/privacy.html> | 5.3 |
+| Support URL | <https://github.com/chainedtimers/chainedtimers.github.io/issues> | 5.3 |
+| Marketing URL (optional) | <https://chainedtimers.github.io/> | 5.3 |
 | Upload keystore (you'll generate in step 2) | `publishing/android/secrets/upload.keystore` (gitignored) | 3 |
 
 ---
@@ -137,15 +149,15 @@ After step 3.5.2 is done once:
 1. Bump `versionCode` (must increase) and `versionName` in [`android/app/build.gradle`](../../android/app/build.gradle).
 2. Update the release notes at [`android/app/src/main/play/release-notes/en-US/default.txt`](../../android/app/src/main/play/release-notes/en-US/default.txt) (max ~500 chars per locale).
 3. Double-click one of:
-   - [`4-publish-to-play.bat`](4-publish-to-play.bat) — uploads to **Internal testing + Closed testing** (tracks `internal,alpha`). Day-to-day choice.
-   - [`5-publish-to-play-production.bat`](5-publish-to-play-production.bat) — same, plus **Production** (tracks `internal,alpha,production`). Use once you've cleared Google's pre-launch requirements (Closed testing-track residency etc.).
+   - [`4-publish-to-play.bat`](4-publish-to-play.bat) — uploads to **Internal testing + both closed tests** (tracks `internal,alpha,self-service`). Day-to-day choice.
+   - [`5-publish-to-play-production.bat`](5-publish-to-play-production.bat) — same, plus **Production** (tracks `internal,alpha,self-service,production`). Use once you've cleared Google's pre-launch requirements (Closed testing-track residency etc.).
 
 Under the hood: Google's Play Developer API only accepts one upload per `versionCode`, so the script uploads once via `gradlew publishBundle` and copies the same artifact onto the remaining tracks via `gradlew promoteArtifact`. Status defaults to `completed` (immediate rollout).
 
 To override the track list or release status per invocation:
 
 ```powershell
-$env:PLAY_TRACKS = 'alpha'             # comma-separated, in upload-then-promote order
+$env:PLAY_TRACKS = 'alpha,self-service' # both closed tracks, in upload-then-promote order
 $env:PLAY_RELEASE_STATUS = 'draft'     # completed | draft | inProgress | halted
 publishing\android\4-publish-to-play.bat
 ```
@@ -248,7 +260,7 @@ Upload these in the order listed:
 ### 5.7 Store listing contact details
 - **Email**: your developer account email
 - **Phone**: leave blank (optional)
-- **Website**: <https://mayerwin.github.io/Chained-Timers/>
+- **Website**: <https://chainedtimers.github.io/>
 
 ### 5.8 External marketing
 - → **No, my app is not promoted outside Google Play**
@@ -330,7 +342,7 @@ Left sidebar → **Test and release → Production → Create new release**.
 6. **Push to Play Console**, either:
    - **Automated** (if `publishing/android/secrets/play-service-account.json` is set up — see §3.5):
      ```
-     publishing\android\4-publish-to-play.bat              # Internal + Closed testing
+     publishing\android\4-publish-to-play.bat              # Internal + Alpha + self-service
      publishing\android\5-publish-to-play-production.bat   # adds Production
      ```
    - **Manual**:

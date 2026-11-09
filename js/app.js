@@ -30,17 +30,17 @@ const APP_VERSION = '1.4.24';
 const UPDATE_URLS = {
   play:      'https://play.google.com/store/apps/details?id=com.mayerwin.chainedtimers',
   appstore:  'https://apps.apple.com/app/chained-timers/id0000000000', // TODO: replace after App Store submission
-  sideload:  'https://github.com/mayerwin/Chained-Timers/releases/latest',
+  sideload:  'https://github.com/chainedtimers/chainedtimers.github.io/releases/latest',
 };
 // GitHub Releases API — checked at launch on native to see if a newer
 // tag exists than APP_VERSION. This is the mechanism that actually works
 // today because most users are on sideload APK installs which the Play
 // Store has no record of, so the Play In-App Updates API would return
 // UPDATE_NOT_AVAILABLE for them regardless. Set to null to disable.
-const UPDATE_CHECK_URL = 'https://api.github.com/repos/mayerwin/Chained-Timers/releases/latest';
+const UPDATE_CHECK_URL = 'https://api.github.com/repos/chainedtimers/chainedtimers.github.io/releases/latest';
 // Where "Not really" goes: a prefilled issue, so unhappy feedback reaches
 // us privately instead of the public store listing.
-const FEEDBACK_ISSUE_URL = 'https://github.com/mayerwin/Chained-Timers/issues/new';
+const FEEDBACK_ISSUE_URL = 'https://github.com/chainedtimers/chainedtimers.github.io/issues/new';
 
 // ============================================================
 // Updater — "is a newer version out?"

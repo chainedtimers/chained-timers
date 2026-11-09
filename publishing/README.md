@@ -17,7 +17,7 @@ publishing/
 | --- | --- |
 | Publish to **Google Play Store** | [`publishing/android/README.md`](android/README.md) |
 | Publish to **Apple App Store**   | [`publishing/ios/README.md`](ios/README.md) |
-| Just sideload-distribute the APK | already done — see [GitHub Releases](https://github.com/mayerwin/Chained-Timers/releases) |
+| Just sideload-distribute the APK | already done — see [GitHub Releases](https://github.com/chainedtimers/chainedtimers.github.io/releases) |
 
 Each platform's README is a numbered checklist. Every step says *exactly* which file to upload or which text to paste from the surrounding folder.
 
@@ -29,9 +29,9 @@ Each platform's README is a numbered checklist. Every step says *exactly* which 
 
 | Asset | Path | Notes |
 | --- | --- | --- |
-| Privacy policy | hosted at <https://mayerwin.github.io/Chained-Timers/privacy.html>, source [`privacy.html`](../privacy.html) | required URL on both stores |
-| Support URL | <https://github.com/mayerwin/Chained-Timers/issues> | required URL on both stores |
-| Marketing URL | <https://mayerwin.github.io/Chained-Timers/> | optional, recommended |
+| Privacy policy | hosted at <https://chainedtimers.github.io/privacy.html>, source [`privacy.html`](../privacy.html) | required URL on both stores |
+| Support URL | <https://github.com/chainedtimers/chainedtimers.github.io/issues> | required URL on both stores |
+| Marketing URL | <https://chainedtimers.github.io/> | optional, recommended |
 
 ### Android (Play Store) — [`publishing/android/`](android/)
 
@@ -130,11 +130,11 @@ You can't — submission requires a logged-in human session in the Play Console 
 
 ## Status
 
-- ✅ Privacy policy hosted at <https://mayerwin.github.io/Chained-Timers/privacy.html>
+- ✅ Privacy policy hosted at <https://chainedtimers.github.io/privacy.html>
 - ✅ All Android Play Store assets generated and documented
 - ✅ All Apple App Store assets generated and documented (excluding iOS native build, which requires `npm run cap:add:ios` on a macOS machine — see [`ios/README.md`](ios/README.md))
 - ❌ Play Console developer account (one-time $25, human action required)
 - ❌ Apple Developer Program membership ($99/yr, human action required)
 - ❌ Initial submission to either store (human action required)
 
-Sideload distribution at <https://github.com/mayerwin/Chained-Timers/releases> remains free and instant.
+Sideload distribution at <https://github.com/chainedtimers/chainedtimers.github.io/releases> remains free and instant.

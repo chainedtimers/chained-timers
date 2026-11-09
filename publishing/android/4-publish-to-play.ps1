@@ -1,7 +1,7 @@
 # =====================================================================
 # Build + upload the Play Store AAB to all testing tracks.
 #
-# Default tracks: `internal` (Internal testing) + `alpha` (Closed testing).
+# Default tracks: `internal` + `alpha` (existing email testers) + `self-service` (shared beta group).
 # We upload once via `gradlew publishBundle` (configured to the first
 # track) and then `gradlew promoteArtifact` copies the same artifact onto
 # the remaining tracks. The Play Developer API only accepts one upload
@@ -11,8 +11,8 @@
 # `production` to the list -- use that when you're ready to ship.
 #
 # Override the track list per invocation:
-#   $env:PLAY_TRACKS = 'internal,alpha,beta'      # add Open testing
-#   $env:PLAY_TRACKS = 'alpha'                    # closed testing only
+#   $env:PLAY_TRACKS = 'internal,alpha,self-service,beta' # add Open testing
+#   $env:PLAY_TRACKS = 'alpha,self-service'      # both closed testing tracks
 #   .\publishing\android\4-publish-to-play.ps1
 #
 # (`$env:PLAY_TRACK` -- singular -- is still honoured for one-track runs;
@@ -75,7 +75,7 @@ if ($env:PLAY_TRACKS) {
 } elseif ($env:PLAY_TRACK) {
     $tracksRaw = $env:PLAY_TRACK
 } else {
-    $tracksRaw = 'internal,alpha'
+    $tracksRaw = 'internal,alpha,self-service'
 }
 $tracks = @($tracksRaw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 if ($tracks.Count -eq 0) {

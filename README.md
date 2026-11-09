@@ -6,8 +6,8 @@
 **The interval forge.** Sequence intervals into named chains for sport, breathwork, cooking, study — anything paced.
 A small, fast PWA that vibrates and notifies between segments and runs offline once installed.
 
-[**→ Open the web app**](https://mayerwin.github.io/Chained-Timers/) ·
-[Install as PWA](#install-as-pwa) ·
+[**→ Open the web app**](https://chainedtimers.github.io/) ·
+[Android beta](#android-beta) · [Install as PWA](#install-as-pwa) ·
 [Build native app (iOS / Android)](#build-the-native-app)
 
 </div>
@@ -56,6 +56,18 @@ The original idea — *"chained, snooze-free interval timers"* — comes from **
 
 ---
 
+## Android beta
+
+As of October 10, 2026, the new self-service closed track is **submitted for Google checks and review**, with activation pending. It uses the shared **Erwin Mayer Labs Beta** group. Existing Alpha access is unchanged. Once the new track is active:
+
+1. [Join the shared beta group](https://groups.google.com/g/erwin-mayer-labs-beta) using your Google Play account.
+2. [Join the Chained Timers test](https://play.google.com/apps/testing/com.github.chainedtimers).
+3. Follow the Play Store link and install normally on your Android device using the same account. No debugging or APK installation is needed.
+
+Group membership does not automatically opt you into an app: join each app's test separately. Existing Chained Timers Alpha testers should stay opted in; their current access is preserved. [Beta and release details](publishing/android/README.md#current-closed-beta-and-family-signup).
+
+---
+
 ## Install as PWA
 
 The fastest way to use the app — no app stores, no developer accounts, no install size beyond a few KB.
@@ -82,12 +94,12 @@ For true background reliability — segment notifications that fire when the scr
 
 ### Android — debug APK (free, no developer account)
 
-Pre-built APKs are attached to every [GitHub Release](https://github.com/mayerwin/Chained-Timers/releases) and produced on every push to `main` as a workflow artifact you can download from the [Actions tab](https://github.com/mayerwin/Chained-Timers/actions). Sideload directly to any Android phone — no Play Store required.
+Pre-built APKs are attached to every [GitHub Release](https://github.com/chainedtimers/chainedtimers.github.io/releases) and produced on every push to `main` as a workflow artifact you can download from the [Actions tab](https://github.com/chainedtimers/chainedtimers.github.io/actions). Sideload directly to any Android phone — no Play Store required.
 
 To build locally:
 
 ```bash
-git clone https://github.com/mayerwin/Chained-Timers.git
+git clone https://github.com/chainedtimers/chainedtimers.github.io.git
 cd Chained-Timers
 npm install
 npm run cap:android       # opens Android Studio with the project ready to build
@@ -111,7 +123,7 @@ See [**PUBLISHING.md**](PUBLISHING.md) for the complete step-by-step recipe (key
 ### iOS — sideload or App Store
 
 ```bash
-git clone https://github.com/mayerwin/Chained-Timers.git
+git clone https://github.com/chainedtimers/chainedtimers.github.io.git
 cd Chained-Timers
 npm install
 npm run cap:add:ios       # one-time scaffold (requires CocoaPods on macOS)
@@ -256,7 +268,7 @@ Everything is on by default — turn off what you don't want.
 ### Local development
 
 ```bash
-git clone https://github.com/mayerwin/Chained-Timers.git
+git clone https://github.com/chainedtimers/chainedtimers.github.io.git
 cd Chained-Timers
 npm install
 npm run serve               # http://localhost:4321

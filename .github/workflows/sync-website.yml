@@ -1,0 +1,110 @@
+name: Sync website to chainedtimers.github.io
+
+# Builds the Chained Timers PWA web app (npm run build:www) and mirrors the output
+# into the chainedtimers/chainedtimers.github.io repo every time main changes.
+#
+# ──────────────────────────────────────────────────────────────────────────
+# Setup: a fine-grained Personal Access Token with Contents: read and write on
+# chainedtimers/chainedtimers.github.io, stored in this repo as WEBSITE_DEPLOY_TOKEN.
+# ──────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'index.html'
+      - 'privacy.html'
+      - 'manifest.webmanifest'
+      - 'sw.js'
+      - 'css/**'
+      - 'js/**'
+      - 'icons/**'
+      - 'fonts/**'
+      - 'tools/build-www.mjs'
+      - '.github/workflows/sync-website.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-website
+  cancel-in-progress: true
+
+jobs:
+  build-and-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build web application
+        run: node tools/build-www.mjs
+
+      - name: Copy auxiliary files and inject redirects
+        run: |
+          touch dist/.nojekyll
+          [ -f privacy.html ] && cp privacy.html dist/
+
+          mkdir -p dist/chained-timers dist/Chained-Timers
+          cat << 'EOF' > dist/chained-timers/index.html
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <title>Chained Timers</title>
+            <meta http-equiv="refresh" content="0; url=https://chainedtimers.github.io/">
+            <link rel="canonical" href="https://chainedtimers.github.io/">
+            <script>
+              window.location.replace("https://chainedtimers.github.io/" + window.location.search + window.location.hash);
+            </script>
+          </head>
+          <body>
+            <p>Redirecting to <a href="https://chainedtimers.github.io/">chainedtimers.github.io</a>...</p>
+          </body>
+          </html>
+          EOF
+
+          cp dist/chained-timers/index.html dist/Chained-Timers/index.html
+
+          cat << 'EOF' > dist/404.html
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <title>Chained Timers</title>
+            <script>
+              (function() {
+                var path = window.location.pathname;
+                var match = path.match(/^\/chained-timers(?:\/(.*))?$/i);
+                if (match) {
+                  var sub = match[1] || '';
+                  window.location.replace("https://chainedtimers.github.io/" + sub + window.location.search + window.location.hash);
+                  return;
+                }
+                window.location.replace("https://chainedtimers.github.io/");
+              })();
+            </script>
+          </head>
+          <body>
+            <p>Redirecting to <a href="https://chainedtimers.github.io/">chainedtimers.github.io</a>...</p>
+          </body>
+          </html>
+          EOF
+
+      - name: Mirror to chainedtimers.github.io
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          personal_token: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}
+          external_repository: chainedtimers/chainedtimers.github.io
+          publish_branch: main
+          publish_dir: ./dist
+          force_orphan: true
+          user_name: 'chainedtimers-bot'
+          user_email: 'bot@users.noreply.github.com'
+          commit_message: 'Sync from chainedtimers/chained-timers@${{ github.sha }}'

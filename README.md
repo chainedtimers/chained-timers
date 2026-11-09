@@ -94,12 +94,12 @@ For true background reliability — segment notifications that fire when the scr
 
 ### Android — debug APK (free, no developer account)
 
-Pre-built APKs are attached to every [GitHub Release](https://github.com/chainedtimers/chainedtimers.github.io/releases) and produced on every push to `main` as a workflow artifact you can download from the [Actions tab](https://github.com/chainedtimers/chainedtimers.github.io/actions). Sideload directly to any Android phone — no Play Store required.
+Pre-built APKs are attached to every [GitHub Release](https://github.com/chainedtimers/chained-timers/releases) and produced on every push to `main` as a workflow artifact you can download from the [Actions tab](https://github.com/chainedtimers/chained-timers/actions). Sideload directly to any Android phone — no Play Store required.
 
 To build locally:
 
 ```bash
-git clone https://github.com/chainedtimers/chainedtimers.github.io.git
+git clone https://github.com/chainedtimers/chained-timers.git
 cd Chained-Timers
 npm install
 npm run cap:android       # opens Android Studio with the project ready to build
@@ -123,7 +123,7 @@ See [**PUBLISHING.md**](PUBLISHING.md) for the complete step-by-step recipe (key
 ### iOS — sideload or App Store
 
 ```bash
-git clone https://github.com/chainedtimers/chainedtimers.github.io.git
+git clone https://github.com/chainedtimers/chained-timers.git
 cd Chained-Timers
 npm install
 npm run cap:add:ios       # one-time scaffold (requires CocoaPods on macOS)
@@ -268,7 +268,7 @@ Everything is on by default — turn off what you don't want.
 ### Local development
 
 ```bash
-git clone https://github.com/chainedtimers/chainedtimers.github.io.git
+git clone https://github.com/chainedtimers/chained-timers.git
 cd Chained-Timers
 npm install
 npm run serve               # http://localhost:4321

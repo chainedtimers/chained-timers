@@ -17,7 +17,7 @@ publishing/
 | --- | --- |
 | Publish to **Google Play Store** | [`publishing/android/README.md`](android/README.md) |
 | Publish to **Apple App Store**   | [`publishing/ios/README.md`](ios/README.md) |
-| Just sideload-distribute the APK | already done — see [GitHub Releases](https://github.com/chainedtimers/chainedtimers.github.io/releases) |
+| Just sideload-distribute the APK | already done — see [GitHub Releases](https://github.com/chainedtimers/chained-timers/releases) |
 
 Each platform's README is a numbered checklist. Every step says *exactly* which file to upload or which text to paste from the surrounding folder.
 
@@ -30,7 +30,7 @@ Each platform's README is a numbered checklist. Every step says *exactly* which 
 | Asset | Path | Notes |
 | --- | --- | --- |
 | Privacy policy | hosted at <https://chainedtimers.github.io/privacy.html>, source [`privacy.html`](../privacy.html) | required URL on both stores |
-| Support URL | <https://github.com/chainedtimers/chainedtimers.github.io/issues> | required URL on both stores |
+| Support URL | <https://github.com/chainedtimers/chained-timers/issues> | required URL on both stores |
 | Marketing URL | <https://chainedtimers.github.io/> | optional, recommended |
 
 ### Android (Play Store) — [`publishing/android/`](android/)
@@ -137,4 +137,4 @@ You can't — submission requires a logged-in human session in the Play Console 
 - ❌ Apple Developer Program membership ($99/yr, human action required)
 - ❌ Initial submission to either store (human action required)
 
-Sideload distribution at <https://github.com/chainedtimers/chainedtimers.github.io/releases> remains free and instant.
+Sideload distribution at <https://github.com/chainedtimers/chained-timers/releases> remains free and instant.

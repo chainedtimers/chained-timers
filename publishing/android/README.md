@@ -31,7 +31,7 @@ Release scripts target both closed tracks so existing Alpha testers and new grou
 | Content rating answers | [`content-rating.md`](content-rating.md) | 4.4 |
 | `USE_EXACT_ALARM` justification | [`permissions-declaration.md`](permissions-declaration.md) | 6.3 |
 | Privacy policy URL | <https://chainedtimers.github.io/privacy.html> | 5.3 |
-| Support URL | <https://github.com/chainedtimers/chainedtimers.github.io/issues> | 5.3 |
+| Support URL | <https://github.com/chainedtimers/chained-timers/issues> | 5.3 |
 | Marketing URL (optional) | <https://chainedtimers.github.io/> | 5.3 |
 | Upload keystore (you'll generate in step 2) | `publishing/android/secrets/upload.keystore` (gitignored) | 3 |
 

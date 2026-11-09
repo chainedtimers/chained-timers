@@ -7,7 +7,7 @@
   "homepage": "https://chainedtimers.github.io/",
   "repository": {
     "type": "git",
-    "url": "https://github.com/chainedtimers/chainedtimers.github.io.git"
+    "url": "https://github.com/chainedtimers/chained-timers.git"
   },
   "scripts": {
     "serve": "node tools/serve.mjs",

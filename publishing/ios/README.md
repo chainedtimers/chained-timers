@@ -18,7 +18,7 @@ A copy-paste recipe. Total active human time: ~90 min spread across ~3 days (rev
 | App Privacy form answers | [`app-privacy.md`](app-privacy.md) | 5.4 |
 | Info.plist usage descriptions | [`info-plist-additions.txt`](info-plist-additions.txt) | 4.1 |
 | Privacy policy URL | <https://chainedtimers.github.io/privacy.html> | 6.3 |
-| Support URL | <https://github.com/chainedtimers/chainedtimers.github.io/issues> | 6.3 |
+| Support URL | <https://github.com/chainedtimers/chained-timers/issues> | 6.3 |
 | Marketing URL (optional) | <https://chainedtimers.github.io/> | 6.3 |
 | Bundle identifier | `com.github.chainedtimers` (already set) | 5.2 |
 | App Store IPA build script | [`3-build-app-store-ipa.sh`](3-build-app-store-ipa.sh) + [`ExportOptions.plist`](ExportOptions.plist) | 7.2 |
@@ -54,7 +54,7 @@ Verify: `pod --version` should print `1.x.x`.
 ## 3. Scaffold the iOS project (one-time, ~3 min)
 
 ```bash
-git clone https://github.com/chainedtimers/chainedtimers.github.io.git
+git clone https://github.com/chainedtimers/chained-timers.git
 cd Chained-Timers
 npm install
 npm run cap:add:ios       # generates ios/ folder, runs pod install
@@ -188,7 +188,7 @@ Paste from [`store-listing.md`](store-listing.md) §"Description".
 Paste from [`store-listing.md`](store-listing.md) §"Keywords".
 
 ### 6.7 Support URL
-<https://github.com/chainedtimers/chainedtimers.github.io/issues>
+<https://github.com/chainedtimers/chained-timers/issues>
 
 ### 6.8 Marketing URL (optional)
 <https://chainedtimers.github.io/>

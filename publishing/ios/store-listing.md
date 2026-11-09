@@ -69,7 +69,7 @@ The app uses local notifications and haptic feedback to fire segment-end alerts 
 
 Templates included: Tabata, EMOM 10, Boxing Rounds, Pomodoro, Plank Stack, Box Breath. Tap any to fork into your library, then customise freely.
 
-Open source: github.com/chainedtimers/chainedtimers.github.io
+Open source: github.com/chainedtimers/chained-timers
 ```
 
 ---

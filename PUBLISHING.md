@@ -9,7 +9,7 @@ you're starting from a fresh clone of this repository on a development machine.
 > non-trivial amount of metadata work that pays off only if you intend to
 > publicly distribute. The PWA at <https://chainedtimers.github.io/>
 > is free for anyone to use today and the Android APK on the
-> [Releases page](https://github.com/chainedtimers/chainedtimers.github.io/releases) is one
+> [Releases page](https://github.com/chainedtimers/chained-timers/releases) is one
 > click away on Android.
 
 ---
@@ -69,13 +69,13 @@ Permissions we request:
 We have no analytics SDK, no crash reporter, no ads, no third-party
 trackers, no remote config, and no account system.
 
-For questions, open an issue at https://github.com/chainedtimers/chainedtimers.github.io
+For questions, open an issue at https://github.com/chainedtimers/chained-timers
 ```
 
 ### 2. Support URL
 
 A public page where users can reach you. The repo's GitHub Issues page
-(`https://github.com/chainedtimers/chainedtimers.github.io/issues`) is sufficient.
+(`https://github.com/chainedtimers/chained-timers/issues`) is sufficient.
 
 ### 3. Marketing URL (optional but recommended)
 
@@ -263,7 +263,7 @@ Bump `versionCode` (must increase) and `versionName` in `android/app/build.gradl
 ### Scaffold the iOS project (one-time on a Mac)
 
 ```bash
-git clone https://github.com/chainedtimers/chainedtimers.github.io.git
+git clone https://github.com/chainedtimers/chained-timers.git
 cd Chained-Timers
 npm install
 npm run cap:add:ios       # generates the ios/ folder + runs pod install

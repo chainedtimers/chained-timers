@@ -67,6 +67,10 @@ html, body { height: 100%; overflow: hidden; }
    the swipe to the OS which minimises the app. */
 html, body { overscroll-behavior: none; }
 html { font-size: 16px; }
+/* v1.4.25 — no browser-side text inflation either (mobile "font
+   boosting"): text and the px boxes around it must scale together. The
+   Android app pins WebView text zoom to 100% for the same reason. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 
 body {
   background: var(--bg);
@@ -2158,6 +2162,33 @@ body.is-reordering-chains .chain-card:hover { border-color: var(--rule); backgro
   gap: 14px;
 }
 
+/* v1.4.25 — duration sheet header: "SEGMENT 1" plus an optional name
+   field beneath it, so a new segment can be named where it is created. */
+.dpick-header { align-items: flex-start; }
+.dpick-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  margin-right: 8px;
+}
+.dpick-name-input {
+  width: 100%;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  outline: 0;
+  padding: 8px 10px;
+  font-family: var(--f-body);
+  font-size: 16px;         /* 16px: no iOS focus-zoom */
+  font-weight: 600;
+  color: var(--ink);
+}
+.dpick-name-input::placeholder { color: var(--ink-faint); font-weight: 400; }
+.dpick-name-input:focus { border-color: var(--accent); }
+
 .setting-row {
   display: flex;
   align-items: center;
@@ -2758,6 +2789,27 @@ input:focus-visible,
 .tab:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* v1.4.25 — phone widths: give the segment NAME the room. On a 360px
+   phone the fixed chrome (handle, a 130px-min duration button, bell,
+   trash and five gaps) left the name field ~50px — "Plancl…", and on a
+   phone with a narrower viewport (bigger display size) the placeholder
+   itself read "Nam". Tighter chrome and a duration button sized to its
+   usual "1m 30s" content roughly triple the name's share. */
+@media (max-width: 480px) {
+  .segment-row {
+    grid-template-columns: 20px 1fr auto auto auto;
+    gap: 6px;
+    padding: 10px 6px 10px 2px;
+  }
+  .segment-handle { width: 20px; }
+  .segment-duration {
+    font-size: 17px;
+    padding: 6px 8px;
+    min-width: calc(6ch + 18px);
+  }
+  .segment-cues, .segment-remove { width: 30px; height: 30px; }
 }
 
 /* small screens: reduce sizes a touch */

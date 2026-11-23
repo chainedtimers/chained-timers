@@ -457,6 +457,10 @@ public class ChainTimerPlugin extends Plugin {
         JSArray texts = call.getArray("texts");
         if (texts == null) { call.reject("texts array required"); return; }
         final int n = texts.length();
+        // v1.4.25 — optional BCP-47 tag ("fr-FR"). Sent only when the user
+        // picked the app language explicitly; absent means "follow the
+        // device", i.e. the engine's default voice, as before.
+        final String lang = call.getString("lang", null);
 
         ensureTtsInit(getContext(), () -> {
             JSArray pathsArr = new JSArray();
@@ -472,6 +476,8 @@ public class ChainTimerPlugin extends Plugin {
 
             File voicesDir = new File(getContext().getCacheDir(), "voices");
             if (!voicesDir.exists()) voicesDir.mkdirs();
+
+            applyTtsLanguage(lang);
 
             // v1.4.1 — per-call UUID prefix so concurrent prerender
             // calls from two chains with overlapping (index, text) pairs
@@ -490,7 +496,8 @@ public class ChainTimerPlugin extends Plugin {
                     result[i] = null;
                     continue;
                 }
-                String hash = sha1(text);
+                // Keyed on the language too, so switching it re-renders.
+                String hash = sha1(lang == null ? text : (lang + "|" + text));
                 File outFile = new File(voicesDir, "tts_" + hash + ".wav");
                 result[i] = outFile.getAbsolutePath();
 
@@ -532,6 +539,28 @@ public class ChainTimerPlugin extends Plugin {
             ret.put("paths", pathsArr);
             call.resolve(ret);
         });
+    }
+
+    /** Last language applied to the shared engine (null = its default). */
+    private static String ttsLang = null;
+
+    private static void applyTtsLanguage(String lang) {
+        if (sharedTts == null) return;
+        if (lang == null ? ttsLang == null : lang.equals(ttsLang)) return;
+        try {
+            if (lang == null) {
+                android.speech.tts.Voice def = sharedTts.getDefaultVoice();
+                if (def != null) sharedTts.setVoice(def);
+                else sharedTts.setLanguage(java.util.Locale.getDefault());
+            } else {
+                int rc = sharedTts.setLanguage(java.util.Locale.forLanguageTag(lang));
+                if (rc < TextToSpeech.LANG_AVAILABLE) {
+                    // Not installed: fall back to the bare language.
+                    sharedTts.setLanguage(new java.util.Locale(lang.split("-")[0]));
+                }
+            }
+            ttsLang = lang;
+        } catch (Throwable ignored) {}
     }
 
     private static String sha1(String input) {
@@ -584,6 +613,16 @@ public class ChainTimerPlugin extends Plugin {
 
         Boolean silent = call.getBoolean("silent", false);
         intent.putExtra(ChainTimerService.EXTRA_SILENT, silent != null && silent);
+
+        // v1.4.25 — on ACTION_COMPLETE: JS reached the natural end first
+        // and asks the service for the finale it cannot play itself.
+        Boolean finale = call.getBoolean("finale", false);
+        intent.putExtra(ChainTimerService.EXTRA_FINALE, finale != null && finale);
+
+        // v1.4.25 — localized notification strings (JSON object), so the
+        // service's notifications follow the app's language setting.
+        String stringsJson = call.getString("stringsJson", null);
+        if (stringsJson != null) intent.putExtra(ChainTimerService.EXTRA_STRINGS_JSON, stringsJson);
 
         Boolean tickEnabled = call.getBoolean("tickEnabled", true);
         intent.putExtra(ChainTimerService.EXTRA_TICK_ENABLED, tickEnabled == null || tickEnabled);

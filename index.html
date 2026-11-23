@@ -33,8 +33,8 @@
        Google Fonts stylesheet held the WebView white until the DNS or
        HTTP request timed out). Re-generate with:
          node tools/fetch-fonts.mjs -->
-  <link rel="stylesheet" href="./css/fonts.css?v=1.4.24" />
-  <link rel="stylesheet" href="./css/styles.css?v=1.4.24" />
+  <link rel="stylesheet" href="./css/fonts.css?v=1.4.25" />
+  <link rel="stylesheet" href="./css/styles.css?v=1.4.25" />
 </head>
 <body data-view="library">
 
@@ -435,6 +435,18 @@
           </label>
 
           <h3 class="setting-section-head">Other</h3>
+          <!-- v1.4.25 — UI language. Auto follows the device / browser. -->
+          <div class="setting-row setting-row-column" id="setting-row-language">
+            <span class="setting-row-head">
+              <strong>Language</strong>
+              <small>Language of the app. Auto follows your device.</small>
+            </span>
+            <div class="cue-pill" id="setting-language" role="radiogroup" aria-label="Language">
+              <button type="button" role="radio" data-lang="auto">Auto</button>
+              <button type="button" role="radio" data-lang="en" lang="en">English</button>
+              <button type="button" role="radio" data-lang="fr" lang="fr">Français</button>
+            </div>
+          </div>
           <div class="setting-row setting-row-column" id="setting-row-route">
             <span class="setting-row-head">
               <strong>When a headset is connected</strong>
@@ -597,8 +609,17 @@
       <div class="sheet-scrim" data-close-sheet></div>
       <div class="sheet-card" role="dialog" aria-label="Set duration">
         <div class="sheet-handle" aria-hidden="true"></div>
-        <header class="sheet-header">
-          <h2 class="sheet-title" id="duration-sheet-title">Duration</h2>
+        <header class="sheet-header dpick-header">
+          <!-- v1.4.25 — the sheet names the segment ("Segment 1") and lets
+               the user name it right here, since it opens by itself the
+               moment a chain or segment is created. Optional: leaving it
+               blank keeps the segment unnamed (and silent for voice). -->
+          <div class="dpick-head">
+            <h2 class="sheet-title" id="duration-sheet-title">Duration</h2>
+            <input type="text" class="dpick-name-input" id="dpick-name" maxlength="48"
+                   placeholder="Segment name (optional)" aria-label="Segment name"
+                   autocomplete="off" enterkeyhint="done" hidden />
+          </div>
           <button class="icon-btn" data-close-sheet aria-label="Close">
             <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6L6 18"/></svg>
           </button>
@@ -687,8 +708,10 @@
 
   </div>
 
-  <script src="./js/app.js?v=1.4.24"></script>
+  <!-- v1.4.25 — localisation; must load before app.js (defines T / I18n). -->
+  <script src="./js/i18n.js?v=1.4.25"></script>
+  <script src="./js/app.js?v=1.4.25"></script>
   <!-- Capacitor injects window.Capacitor in native builds; this file is a no-op in browsers -->
-  <script src="./js/native.js?v=1.4.24"></script>
+  <script src="./js/native.js?v=1.4.25"></script>
 </body>
 </html>

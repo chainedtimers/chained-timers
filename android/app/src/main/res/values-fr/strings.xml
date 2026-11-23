@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="channel_transitions">Transitions de chaîne</string>
+    <string name="channel_transitions_desc">État de la chaîne en cours et alerte à chaque fin de segment</string>
+    <string name="channel_complete">Chaîne terminée</string>
+    <string name="channel_complete_desc">Alerte quand une chaîne se termine</string>
+</resources>

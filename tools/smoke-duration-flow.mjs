@@ -146,17 +146,34 @@ console.log('\nTest 5: committing a duration updates the row and clears the poin
   eq(s.hinted[1], false, 'a set duration is never hinted');
 }
 
-console.log('\nTest 6: the title carries the segment name when there is one');
+console.log('\nTest 6: the sheet names the segment, and its name field edits it (v1.4.25)');
 {
-  const title = await page.evaluate(() => {
+  const s6 = await page.evaluate(() => {
     const { Editor, UI } = window.ChainedApp;
     Editor.draft.segments[1].name = 'Rest';
     UI.openDurationPicker(Editor.draft.segments[1]);
-    const t = document.getElementById('duration-sheet-title').textContent;
-    document.getElementById('duration-sheet').hidden = true;
-    return t;
+    const field = document.getElementById('dpick-name');
+    return {
+      title: document.getElementById('duration-sheet-title').textContent,
+      fieldShown: !field.hidden,
+      fieldValue: field.value,
+    };
   });
-  eq(title, 'Segment 2 · Rest', 'named segment shows number and name');
+  eq(s6.title, 'Segment 2', 'title is the segment number');
+  eq(s6.fieldShown, true, 'name field is shown');
+  eq(s6.fieldValue, 'Rest', 'name field holds the current name');
+  await page.fill('#dpick-name', 'Cool down');
+  // Closed WITHOUT setting a duration — the name must stick anyway.
+  await page.click('#duration-sheet .sheet-header [data-close-sheet]');
+  const after = await page.evaluate(() => {
+    const { Editor } = window.ChainedApp;
+    return {
+      model: Editor.draft.segments[1].name,
+      row: document.querySelectorAll('.segment-name-input')[1]?.value,
+    };
+  });
+  eq(after.model, 'Cool down', 'typed name lands on the segment');
+  eq(after.row, 'Cool down', 'row under the sheet shows it too');
 }
 
 console.log('\nTest 7: opening an EXISTING chain does not auto-open anything');

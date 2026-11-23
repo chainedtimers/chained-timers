@@ -23,6 +23,22 @@ public class MainActivity extends BridgeActivity {
         // reserving space for them at the decor level.
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
 
+        // v1.4.25 — render text at the size the layout was designed for.
+        // Android WebView applies the system font-size setting as a TEXT
+        // zoom: every font grows, but the px-sized boxes around it don't,
+        // so text overflows its slot (reported on a Motorola with a larger
+        // font: the segment field's "Name" placeholder showed as "Nam").
+        // With text zoom pinned to 100%, everything scales together with
+        // the system *display size* instead, which Android already applies
+        // uniformly through the screen density.
+        try {
+            if (bridge != null && bridge.getWebView() != null) {
+                bridge.getWebView().getSettings().setTextZoom(100);
+            }
+        } catch (Throwable t) {
+            android.util.Log.w("ChainedTimers", "setTextZoom failed", t);
+        }
+
         // v1.4.10 — register a predictive-back callback on API 33+.
         //
         // Before this, we relied solely on onBackPressed() (below) to

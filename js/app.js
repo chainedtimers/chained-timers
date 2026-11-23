@@ -15,7 +15,7 @@ const STORAGE_KEY = 'chained-timers/v1';
 // version field. Kept as a literal here (not injected via <script>) so
 // the file is self-contained when opened directly in a browser during
 // development. Update by hand if editing this file outside the build.
-const APP_VERSION = '1.4.24';
+const APP_VERSION = '1.4.25';
 
 // Where "Update available" points on native. Selection order at run time:
 //   1. If the plugin reports the install came from the Play Store, the
@@ -308,6 +308,10 @@ const DEFAULT_SETTINGS = {
   // alarm volume is at 0% why can't I hear anything?" bug). v1.4.5
   // defaults to media which matches how competing workout timers behave.
   ringThroughDnd: false,
+  // v1.4.25 — UI language: 'auto' follows the device / browser language
+  // (French if it is French, English otherwise); 'en' / 'fr' pin it.
+  // See js/i18n.js.
+  language: 'auto',
 };
 
 const TEMPLATES = [
@@ -381,6 +385,16 @@ const TEMPLATES = [
     ],
   },
 ];
+
+// v1.4.25 — a template in the current UI language. Forking one copies
+// these words into the user's chain, where they become the user's own
+// text (a later language switch leaves the forked chain alone).
+const localizeTemplate = (tpl) => ({
+  ...tpl,
+  name: I18n.tpl(tpl.name),
+  desc: I18n.tpl(tpl.desc),
+  segments: tpl.segments.map(s => ({ ...s, name: I18n.tpl(s.name) })),
+});
 
 const uid = (prefix = 'id') =>
   prefix + '_' + Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-3);
@@ -532,7 +546,7 @@ const Store = {
     if (!c) return null;
     const copy = JSON.parse(JSON.stringify(c));
     copy.id = uid('c');
-    copy.name = (c.name || 'Chain') + ' (copy)';
+    copy.name = T('{name} (copy)', { name: c.name || T('Chain') });
     copy.segments = Array.isArray(copy.segments)
       ? copy.segments.map(s => ({ ...s, id: uid('s') }))
       : [];
@@ -599,7 +613,7 @@ function expandChain(rootChain, opts = {}) {
         // blank.
         const rawName = (seg.name || '').trim();
         const expanded = {
-          name: rawName || 'Segment',
+          name: rawName || T('Segment'),
           hasName: !!rawName,
           duration: Math.max(1, seg.duration | 0),
           color: seg.color || rootChain.color || 'amber',
@@ -737,13 +751,51 @@ const Audio = {
   // burst that always began "now" put its pulses a beat late (a 2s
   // segment beeped on 2, 1 and on the 0 that belongs to the chime).
   // finalThreeOffsets drops the pulses already behind us.
+  //
+  // v1.4.25 — two more ways the web path drifted off the digits:
+  //   - a suspended context (autoplay policy, or the browser idling it)
+  //     resumes asynchronously and its clock stands still until then, so
+  //     pulses scheduled against it all slid late by the resume time.
+  //     The burst now waits for the resume and re-measures the time left.
+  //   - the output latency (outputLatency / baseLatency: tens of ms, far
+  //     more over Bluetooth) delays every pulse; they are scheduled that
+  //     much early so they are HEARD on the digit.
   finalThree(remainingMs = 3000) {
     if (this._skipOnNative()) return;
     this.ensure();
     if (!this.ctx) return;
+    const endAt = performance.now() + remainingMs;
+    if (this.ctx.state !== 'running') {
+      this.ctx.resume?.().then(() => {
+        if (this.ctx.state === 'running') this._scheduleFinalThree(endAt - performance.now());
+      }).catch(() => {});
+      return;
+    }
+    this._scheduleFinalThree(remainingMs);
+  },
+
+  outputLatency() {
+    const c = this.ctx;
+    if (!c) return 0;
+    const lat = (Number(c.outputLatency) || 0) + (Number(c.baseLatency) || 0);
+    return Math.max(0, Math.min(0.5, lat));
+  },
+
+  /** How much earlier than its digit the engine should arm the burst
+   *  (ms) so the output lag can be taken out of it. 0 on native. */
+  leadMs() {
+    return this._skipOnNative() ? 0 : Math.round(this.outputLatency() * 1000);
+  },
+
+  _scheduleFinalThree(remainingMs) {
     const t0 = this.ctx.currentTime;
-    for (const offsetMs of finalThreeOffsets(remainingMs)) {
-      const t   = t0 + offsetMs / 1000;
+    const offsets = finalThreeOffsets(remainingMs);
+    // One shift for every pulse, so the 1-second spacing is never bent:
+    // as much of the output lag as the first pulse has room for (the
+    // engine arms the burst leadMs() early so there normally is).
+    const lead = Math.min(this.outputLatency(), (offsets[0] || 0) / 1000);
+    for (const offsetMs of offsets) {
+      const t   = t0 + offsetMs / 1000 - lead;
       const osc = this.ctx.createOscillator();
       const g   = this.ctx.createGain();
       osc.type  = 'square';
@@ -913,6 +965,10 @@ const Voice = {
   // languages list, then to English, so a browser that exposes neither
   // still speaks rather than throwing.
   preferredLang() {
+    // v1.4.25 — an explicit app language wins (the segment names of a
+    // French template are French whatever the browser says).
+    const pinned = (typeof I18n !== 'undefined') ? I18n.ttsLang() : null;
+    if (pinned) return pinned;
     try {
       const tag = navigator.language || (navigator.languages || [])[0];
       return (typeof tag === 'string' && tag) ? tag : 'en';
@@ -951,13 +1007,16 @@ const Voice = {
     // body, etc). Keying off `.name` here re-introduces the "Segment"
     // TTS bug this fix is trying to kill.
     const texts = segments.map(s => (s && s.hasName) ? s.name : '');
-    const key   = texts.join('|');
+    // v1.4.25 — an explicit app language pins the TTS voice; it is part
+    // of the cache key so switching language re-renders the files.
+    const lang  = I18n.ttsLang();
+    const key   = (lang || '') + '#' + texts.join('|');
     const id    = chainId || '__default__';
     if (this._chainKeys.get(id) === key && this._chainPaths.get(id)?.length === texts.length) {
       return this._chainPaths.get(id);
     }
     try {
-      const result = await ct.prerenderVoices({ texts });
+      const result = await ct.prerenderVoices(lang ? { texts, lang } : { texts });
       const paths = Array.isArray(result?.paths) ? result.paths : [];
       this._chainKeys.set(id, key);
       this._chainPaths.set(id, paths);
@@ -1125,7 +1184,7 @@ const Toast = {
     const stack = document.getElementById('toast-stack');
     const t = document.createElement('div');
     t.className = 'toast' + (kind ? ' is-' + kind : '');
-    t.innerHTML = `<span class="t-mark"></span>${escape(message)}`;
+    t.innerHTML = `<span class="t-mark"></span>${escape(T(message))}`;
     stack.appendChild(t);
     setTimeout(() => {
       t.classList.add('is-out');
@@ -1147,7 +1206,7 @@ const Toast = {
     // list won't fit one line). Single-line stays the default so short
     // snackbars keep the tight pill shape.
     t.className = 'toast has-action' + (kind ? ' is-' + kind : '') + (wrap ? ' is-wrap' : '');
-    t.innerHTML = `<span class="t-mark"></span><span class="t-msg">${escape(message)}</span>`;
+    t.innerHTML = `<span class="t-mark"></span><span class="t-msg">${escape(T(message))}</span>`;
     let timer = null;
     const dismiss = () => {
       if (timer) { clearTimeout(timer); timer = null; }
@@ -1163,7 +1222,7 @@ const Toast = {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'toast-action-btn';
-      btn.textContent = a.label;
+      btn.textContent = T(a.label);
       btn.addEventListener('click', () => { dismiss(); a.onAction(); });
       t.appendChild(btn);
     }
@@ -1581,9 +1640,13 @@ class EngineRun {
       // a background run would either be redundant in foreground or
       // silent in background — net zero benefit, net possible doubling).
       if (!this.isPaused && this._isFocused() && effectiveCue(seg, this.chain, 'finalTick')) {
-        if (remainingInt <= 3 && remainingInt >= 1 && this.finalThreeFiredFor !== this.currentIndex) {
+        // v1.4.25 — armed the output lag ahead of the 3 (web path), so
+        // the pulses can be scheduled early enough to be HEARD on their
+        // digits; the vibration pattern opens with that same short wait.
+        const remainingMs = Math.max(0, seg.duration * 1000 - elapsedMs);
+        if (remainingMs <= 3000 + Audio.leadMs() && remainingInt >= 1
+            && this.finalThreeFiredFor !== this.currentIndex) {
           this.finalThreeFiredFor = this.currentIndex;
-          const remainingMs = Math.max(0, seg.duration * 1000 - elapsedMs);
           if (effectiveCue(seg, this.chain, 'sound'))   Audio.finalThree(remainingMs);
           if (effectiveCue(seg, this.chain, 'vibrate')) Vibe.finalTick(remainingMs);
         }
@@ -1668,7 +1731,7 @@ class EngineRun {
       if (!isUserSkip && effectiveCue(seg,     this.chain, 'vibrate')) Vibe.segmentEnd();
       if (nextSeg && nextSeg.hasName && effectiveCue(nextSeg, this.chain, 'voice')) Voice.speak(nextSeg.name);
       if (!isUserSkip && nextSeg) {
-        Notif.show(`Next: ${nextSeg.name}`, `${fmtLong(nextSeg.duration)} · ${this.currentIndex + 1} of ${this.segments.length}`);
+        Notif.show(T('Next: {name}', { name: nextSeg.name }), `${fmtLong(nextSeg.duration)} · ${T('{i} of {n}', { i: this.currentIndex + 1, n: this.segments.length })}`);
       }
     }
 
@@ -1856,6 +1919,8 @@ class EngineRun {
 
   _complete(reason = 'auto') {
     const total = this.segments.reduce((s, x) => s + x.duration, 0);
+    const lastSeg = this.segments[this.segments.length - 1];
+    const lastSound = effectiveCue(lastSeg, this.chain, 'sound');
     this.stop({ preserveNotifications: true });
     window.dispatchEvent(new CustomEvent('chain:complete', {
       detail: {
@@ -1864,13 +1929,18 @@ class EngineRun {
         segments: this.segments.map(s => ({ name: s.name, duration: s.duration, color: s.color })),
         currentIndex: this.segments.length - 1,
         totalSeconds: total,
+        // v1.4.25 — on native the service plays the finale. When this
+        // engine reaches the natural end before the service's own tick
+        // does, the service would otherwise treat the completion as
+        // silent; tell it whether the finale is owed.
+        soundEnabled: lastSound,
+        finale: reason === 'auto' && lastSound,
       },
     }));
-    const lastSeg = this.segments[this.segments.length - 1];
     if (reason !== 'catchup' && this._isFocused()) {
       if (effectiveCue(lastSeg, this.chain, 'sound'))   Audio.finale();
       if (effectiveCue(lastSeg, this.chain, 'vibrate')) Vibe.finale();
-      Notif.show(`${this.chain.name} complete`, `${fmtLong(total)} · ${this.segments.length} segments`);
+      Notif.show(T('{name} complete', { name: this.chain.name }), `${fmtLong(total)} · ${Tn(this.segments.length, '{n} segment', '{n} segments')}`);
     }
     this._cbComplete(total, reason);
   }
@@ -2002,7 +2072,7 @@ const Engine = {
       return true;
     }
     if (this.activeRunningCount() >= MAX_CONCURRENT_RUNS) {
-      Toast.show(`${MAX_CONCURRENT_RUNS} chains already running — stop one to start another.`, 'warn');
+      Toast.show(T('{n} chains already running — stop one to start another.', { n: MAX_CONCURRENT_RUNS }), 'warn');
       return false;
     }
     const run = new EngineRun(chain);
@@ -2034,8 +2104,8 @@ const Engine = {
     const alreadyRunning = chains.filter(c => this.isChainRunning(c.id));
     let fresh = chains.filter(c => !this.isChainRunning(c.id));
     if (alreadyRunning.length) {
-      const names = alreadyRunning.map(c => c.name || 'a chain').join(', ');
-      Toast.show(`${names} already running — skipped from synced start.`, 'warn');
+      const names = alreadyRunning.map(c => c.name || T('a chain')).join(', ');
+      Toast.show(T('{names} already running — skipped from synced start.', { names }), 'warn');
     }
     if (!fresh.length) {
       if (chains[0]) this.focus(chains[0].id);
@@ -2043,11 +2113,11 @@ const Engine = {
     }
     const remaining = MAX_CONCURRENT_RUNS - this.activeRunningCount();
     if (remaining <= 0) {
-      Toast.show(`${MAX_CONCURRENT_RUNS} chains already running.`, 'warn');
+      Toast.show(T('{n} chains already running.', { n: MAX_CONCURRENT_RUNS }), 'warn');
       return false;
     }
     if (fresh.length > remaining) {
-      Toast.show(`Up to ${MAX_CONCURRENT_RUNS} chains at once.`, 'warn');
+      Toast.show(T('Up to {n} chains at once.', { n: MAX_CONCURRENT_RUNS }), 'warn');
       fresh = fresh.slice(0, remaining);
     }
     const startedAt = Date.now();
@@ -2247,7 +2317,7 @@ const Engine = {
       try {
         const chain = Store.getChain(snap.chainId) || {
           id: snap.chainId,
-          name: snap.chainName || 'Restored chain',
+          name: snap.chainName || T('Restored chain'),
           segments: snap.segments,
         };
         const run = new EngineRun(chain);
@@ -2404,7 +2474,7 @@ const Editor = {
     if (!this.draft.name.trim()) {
       const firstNamed = (this.draft.segments || [])
         .find(s => s && s.kind !== 'subchain' && (s.name || '').trim());
-      this.draft.name = firstNamed ? firstNamed.name.trim() : 'Chain';
+      this.draft.name = firstNamed ? firstNamed.name.trim() : T('Chain');
     }
     Store.upsertChain(this.draft);
     this.draftId = this.draft.id;
@@ -2507,10 +2577,10 @@ const UI = {
     });
 
     document.getElementById('library-count').textContent =
-      `${chains.length} ${chains.length === 1 ? 'chain' : 'chains'}`;
+      Tn(chains.length, '{n} chain', '{n} chains');
     const totalSecs = chains.reduce((s, c) => s + chainTotalSeconds(c), 0);
     document.getElementById('library-total').textContent =
-      chains.length ? `${fmtLong(totalSecs)} stored` : '— total';
+      chains.length ? T('{dur} stored', { dur: fmtLong(totalSecs) }) : T('— total');
 
     chains.forEach(chain => {
       const total = chainTotalSeconds(chain);
@@ -2525,7 +2595,7 @@ const UI = {
       // press-and-hold elsewhere on the row still toggles selection.
       const grip = document.createElement('div');
       grip.className = 'chain-card-grip';
-      grip.setAttribute('aria-label', 'Reorder chain');
+      grip.setAttribute('aria-label', T('Reorder chain'));
       grip.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>`;
 
       const stripe = document.createElement('div');
@@ -2538,20 +2608,20 @@ const UI = {
       const loops  = Math.max(1, Number(chain.loops) || 1);
       body.innerHTML = `
         <div class="chain-card-row1">
-          <div class="chain-card-name">${escape(chain.name || 'Chain')}</div>
+          <div class="chain-card-name">${escape(chain.name || T('Chain'))}</div>
           <div class="chain-card-total">${escape(fmtLong(total))}</div>
         </div>
         <div class="chain-card-segments" id="seg-preview-${safeId}"></div>
         <div class="chain-card-meta">
-          <span>${expanded.length} ${expanded.length === 1 ? 'segment' : 'segments'}</span>
-          ${loops > 1 ? `<span class="dot"></span><span>×${loops} loop${loops > 1 ? 's' : ''}</span>` : ''}
-          ${chain.segments.some(s => s && s.kind === 'subchain') ? `<span class="dot"></span><span>nested</span>` : ''}
+          <span>${escape(Tn(expanded.length, '{n} segment', '{n} segments'))}</span>
+          ${loops > 1 ? `<span class="dot"></span><span>${escape(Tn(loops, '×{n} loop', '×{n} loops'))}</span>` : ''}
+          ${chain.segments.some(s => s && s.kind === 'subchain') ? `<span class="dot"></span><span>${escape(T('nested'))}</span>` : ''}
         </div>
       `;
 
       const play = document.createElement('button');
       play.className = 'chain-card-play';
-      play.setAttribute('aria-label', 'Start chain');
+      play.setAttribute('aria-label', T('Start chain'));
       play.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`;
 
       // Selection-mode tick badge (shown via CSS data-select-mode="true").
@@ -2834,12 +2904,12 @@ const UI = {
   // "+N more".
   _showDeleteBlockedNotice(chain, refs) {
     const cap = (s) => {
-      const n = String(s || 'Chain');
+      const n = String(s || T('Chain'));
       return n.length > 16 ? n.slice(0, 15) + '…' : n;
     };
     const names = refs.slice(0, 3).map(c => cap(c.name)).join(', ');
-    const extra = refs.length > 3 ? ` +${refs.length - 3} more` : '';
-    Toast.action(`Can't delete "${cap(chain.name)}" — used by ${names}${extra}`,
+    const extra = refs.length > 3 ? T(' +{n} more', { n: refs.length - 3 }) : '';
+    Toast.action(T('Can\'t delete "{name}" — used by {names}', { name: cap(chain.name), names }) + extra,
       { kind: 'warn', duration: 4000, wrap: true });
   },
 
@@ -2855,7 +2925,7 @@ const UI = {
     const snapshot = Store.getChains()[idx];
     Store.deleteChain(chain.id);
     UI.renderLibrary();
-    Toast.action(`"${chain.name || 'Chain'}" deleted`, {
+    Toast.action(T('"{name}" deleted', { name: chain.name || T('Chain') }), {
       label: 'Undo',
       kind: 'warn',
       onAction: () => {
@@ -3087,7 +3157,7 @@ const UI = {
         const oldest = UI.selectedIds.values().next().value;
         UI.selectedIds.delete(oldest);
         const oldChain = Store.getChain(oldest);
-        Toast.show(`Up to ${MAX_CONCURRENT_RUNS} at once — dropped "${oldChain?.name || 'a chain'}".`, 'warn');
+        Toast.show(T('Up to {n} at once — dropped "{name}".', { n: MAX_CONCURRENT_RUNS, name: oldChain?.name || T('a chain') }), 'warn');
       }
     }
     UI._syncLibrarySelectionUI();
@@ -3121,7 +3191,7 @@ const UI = {
       tick.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`;
       return;
     }
-    const label = idx === 0 ? 'Focus' : String(idx + 1);
+    const label = idx === 0 ? T('Focus') : String(idx + 1);
     tick.innerHTML =
       `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 7"/></svg>` +
       `<span class="chain-card-select-tick-lbl">${escape(label)}</span>`;
@@ -3140,7 +3210,7 @@ const UI = {
     if (UI.selectMode) {
       const n = UI.selectedIds.size;
       const countEl = document.getElementById('library-select-count');
-      if (countEl) countEl.textContent = `${n} selected`;
+      if (countEl) countEl.textContent = T('{n} selected', { n });
       const startBtn = document.getElementById('library-select-start');
       if (startBtn) startBtn.disabled = (n === 0);
       // v1.4.9 — bulk-delete follows the same enable rule as bulk-start.
@@ -3149,8 +3219,8 @@ const UI = {
       const eyebrowEl = document.getElementById('library-select-eyebrow');
       if (eyebrowEl) {
         eyebrowEl.textContent = (n === MAX_CONCURRENT_RUNS)
-          ? `Max ${MAX_CONCURRENT_RUNS} at once`
-          : 'Select chains';
+          ? T('Max {n} at once', { n: MAX_CONCURRENT_RUNS })
+          : T('Select chains');
       }
     }
   },
@@ -3181,13 +3251,13 @@ const UI = {
     const chains = ids.map(id => Store.getChain(id)).filter(Boolean);
     if (!chains.length) { UI.exitSelectMode(); return; }
     const prompt = chains.length === 1
-      ? `Delete "${chains[0].name || 'Chain'}"? This cannot be undone.`
-      : `Delete ${chains.length} chains? This cannot be undone.`;
+      ? T('Delete "{name}"? This cannot be undone.', { name: chains[0].name || T('Chain') })
+      : T('Delete {n} chains? This cannot be undone.', { n: chains.length });
     if (!confirm(prompt)) return;
     for (const c of chains) Store.deleteChain(c.id);
     UI.exitSelectMode();
     UI.renderLibrary();
-    Toast.show(chains.length === 1 ? 'Chain deleted' : `${chains.length} chains deleted`, 'warn');
+    Toast.show(chains.length === 1 ? T('Chain deleted') : T('{n} chains deleted', { n: chains.length }), 'warn');
   },
 
   startRunForChain(chain) {
@@ -3212,7 +3282,7 @@ const UI = {
     // the cap is hit, surfaced here too so the user gets feedback before
     // we even attempt the run.
     if (Engine.activeRunningCount() >= MAX_CONCURRENT_RUNS) {
-      Toast.show(`${MAX_CONCURRENT_RUNS} chains already running — stop one to start another.`, 'warn');
+      Toast.show(T('{n} chains already running — stop one to start another.', { n: MAX_CONCURRENT_RUNS }), 'warn');
       return;
     }
     // Prestart is a chain-level concept (no segment is running yet) — it
@@ -3257,8 +3327,8 @@ const UI = {
     const seg0 = segments[0];
     UI._setRunChainName(chain.name);
     UI._setRunSegmentName(seg0.name);
-    document.getElementById('run-segment-tag').textContent  = 'Segment 1';
-    document.getElementById('run-segment-of').textContent   = `of ${segments.length}`;
+    document.getElementById('run-segment-tag').textContent  = T('Segment {n}', { n: 1 });
+    document.getElementById('run-segment-of').textContent   = T('of {n}', { n: segments.length });
     document.getElementById('run-chain-pos').textContent    = `1 / ${segments.length}`;
     UI._setClockText(fmt(seg0.duration));
     const ring = document.getElementById('run-ring-fill');
@@ -3291,8 +3361,8 @@ const UI = {
     // Reset progress fill / elapsed during the prestart preview.
     document.getElementById('run-progress-fill').style.width = '0%';
     const totalChain = segments.reduce((s, x) => s + x.duration, 0);
-    document.getElementById('run-elapsed').textContent   = `00:00 elapsed`;
-    document.getElementById('run-remaining').textContent = `${fmt(totalChain)} remaining`;
+    document.getElementById('run-elapsed').textContent   = T('{t} elapsed', { t: '00:00' });
+    document.getElementById('run-remaining').textContent = T('{t} remaining', { t: fmt(totalChain) });
     // Chip strip: delegate to renderRunChips — it hides the strip when
     // nothing else is running (classic single-chain prestart) and keeps
     // it visible during an inline prestart over an active session.
@@ -3340,7 +3410,7 @@ const UI = {
     const clock = document.getElementById('run-clock');
     clock.classList.add('is-prestart');
     UI._setClockText(n);
-    document.getElementById('run-segment-tag').textContent = 'Get ready';
+    document.getElementById('run-segment-tag').textContent = T('Get ready');
     document.getElementById('run-segment-of').textContent  = '';
   },
 
@@ -3412,7 +3482,7 @@ const UI = {
   renderTemplates() {
     const list = document.getElementById('template-list');
     list.innerHTML = '';
-    TEMPLATES.forEach(tpl => {
+    TEMPLATES.map(localizeTemplate).forEach(tpl => {
       const li = document.createElement('li');
       li.className = 'template-card';
       const expandedDur = (tpl.loops || 1) * tpl.segments.reduce((s, x) => s + x.duration, 0);
@@ -3437,11 +3507,11 @@ const UI = {
         const pill = document.createElement('span');
         pill.className = 'template-pill';
         pill.style.borderStyle = 'dashed';
-        pill.textContent = `× ${tpl.loops} loops`;
+        pill.textContent = T('× {n} loops', { n: tpl.loops });
         segWrap.appendChild(pill);
       }
       li.addEventListener('click', () => {
-        Editor.loadFromTemplate(tpl);
+        Editor.loadFromTemplate(tpl);   // already in the UI language
         View.show('editor');
       });
       list.appendChild(li);
@@ -3466,7 +3536,7 @@ const UI = {
     const banner = document.getElementById('editor-locked-banner');
     if (banner) banner.hidden = !locked;
 
-    document.getElementById('editor-mode-label').textContent = Editor.draftId ? (locked ? 'Running' : 'Editing') : 'New';
+    document.getElementById('editor-mode-label').textContent = T(Editor.draftId ? (locked ? 'Running' : 'Editing') : 'New');
     const nameInput = document.getElementById('editor-name');
     nameInput.value = draft.name;
     // v1.4.7 — chain NAME stays editable even while running. It's a
@@ -3487,8 +3557,8 @@ const UI = {
       const dot = document.createElement('button');
       dot.className = 'color-dot' + (c.id === draft.color ? ' is-active' : '');
       dot.style.background = c.hex;
-      dot.title = c.id;
-      dot.setAttribute('aria-label', `Color ${c.id}`);
+      dot.title = T(c.id);
+      dot.setAttribute('aria-label', T('Color {c}', { c: T(c.id) }));
       dot.addEventListener('click', () => {
         draft.color = c.id;
         UI.renderEditor();
@@ -3536,13 +3606,13 @@ const UI = {
 
     if (seg.kind === 'subchain') {
       const sub = Store.getChain(seg.refId);
-      const subName = sub ? sub.name : '(missing)';
+      const subName = sub ? sub.name : T('(missing)');
       const subDur  = sub ? chainTotalSeconds(sub) : 0;
       body.innerHTML = `
-        <div class="segment-num">№ ${idx + 1} · embedded chain</div>
+        <div class="segment-num">${escape(T('№ {n} · embedded chain', { n: idx + 1 }))}</div>
         <div class="segment-sub-name">${escape(subName)}</div>
         <div class="segment-sub-meta">
-          ${sub ? `${expandChain(sub).length} segments · ${fmt(subDur)}` : 'Not found'}
+          ${sub ? `${escape(Tn(expandChain(sub).length, '{n} segment', '{n} segments'))} · ${fmt(subDur)}` : escape(T('Not found'))}
         </div>
       `;
       li.appendChild(body);
@@ -3552,9 +3622,9 @@ const UI = {
       loopsWrap.className = 'segment-sub-loops';
       const segLoops = Math.max(1, Number(seg.loops) || 1);
       loopsWrap.innerHTML = `
-        <button data-loop="-1" aria-label="Fewer loops">−</button>
+        <button data-loop="-1" aria-label="${escape(T('Fewer loops'))}">−</button>
         <span>×${segLoops}</span>
-        <button data-loop="+1" aria-label="More loops">+</button>
+        <button data-loop="+1" aria-label="${escape(T('More loops'))}">+</button>
       `;
       loopsWrap.querySelectorAll('button').forEach(b => {
         b.addEventListener('click', () => {
@@ -3567,9 +3637,9 @@ const UI = {
     } else {
       body.innerHTML = `
         <span class="segment-num">№ ${idx + 1}</span>
-        <input type="text" class="segment-name-input" value="${escape(seg.name || '')}" placeholder="Name" maxlength="48" />
+        <input type="text" class="segment-name-input" value="${escape(seg.name || '')}" placeholder="${escape(T('Name'))}" maxlength="48" />
         <div class="segment-meta">
-          <button class="seg-color-btn" aria-label="Cycle color" style="background: ${colorHex(seg.color)}"></button>
+          <button class="seg-color-btn" aria-label="${escape(T('Cycle color'))}" style="background: ${colorHex(seg.color)}"></button>
         </div>`;
       li.appendChild(body);
 
@@ -3611,8 +3681,8 @@ const UI = {
     // glance-readable "this segment differs from chain defaults" signal.
     const cuesBtn = document.createElement('button');
     cuesBtn.className = 'cue-bell segment-cues';
-    cuesBtn.setAttribute('aria-label', 'Segment cue overrides');
-    cuesBtn.setAttribute('title', 'Cue overrides');
+    cuesBtn.setAttribute('aria-label', T('Segment cue overrides'));
+    cuesBtn.setAttribute('title', T('Cue overrides'));
     cuesBtn.innerHTML = `
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
         <path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2.5h-15L6 16z"/>
@@ -3633,7 +3703,7 @@ const UI = {
 
     const removeBtn = document.createElement('button');
     removeBtn.className = 'segment-remove';
-    removeBtn.setAttribute('aria-label', 'Remove segment');
+    removeBtn.setAttribute('aria-label', T('Remove segment'));
     removeBtn.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M6 6l1 14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-14"/></svg>`;
     removeBtn.addEventListener('click', () => {
       if (Editor.draft.segments.length <= 1) {
@@ -3674,8 +3744,8 @@ const UI = {
     const hinting = !!seg && UI._shouldHintDuration(0, seg);
     el.classList.toggle('is-pointing', hinting);
     el.textContent = hinting
-      ? 'Start here: tap the highlighted duration to set how long this segment runs.'
-      : 'Tip: drag the handle to reorder segments. Tap the color dot to change hue, or the bell to override cues.';
+      ? T('Start here: tap the highlighted duration to set how long this segment runs.')
+      : T('Tip: drag the handle to reorder segments. Tap the color dot to change hue, or the bell to override cues.');
   },
 
   renderLibraryStatsOnly() {
@@ -3782,13 +3852,25 @@ const UI = {
     // itself when a chain or segment is created, so a bare "Duration"
     // left the user guessing what they were setting — especially on a
     // new chain, where it must be obvious this is only segment 1.
+    //
+    // v1.4.25 — and let the user NAME it right here. The sheet opens by
+    // itself on a new chain, so "Segment 1" sat above the keypad with no
+    // way to change it short of closing the sheet and finding the row's
+    // name field. The field writes straight into the segment (it's the
+    // same draft object the row edits), so closing the sheet any way —
+    // Set duration, the X, the scrim, Back — keeps what was typed.
     const titleEl = document.getElementById('duration-sheet-title');
+    const nameEl  = document.getElementById('dpick-name');
+    const idx = (Editor.draft?.segments || []).indexOf(seg);
     if (titleEl) {
-      const idx = (Editor.draft?.segments || []).indexOf(seg);
-      const name = (seg?.name || '').trim();
-      titleEl.textContent = idx < 0
-        ? 'Duration'
-        : (name ? `Segment ${idx + 1} · ${name}` : `Segment ${idx + 1}`);
+      titleEl.textContent = idx < 0 ? T('Duration') : T('Segment {n}', { n: idx + 1 });
+    }
+    if (nameEl) {
+      const nameable = idx >= 0 && seg.kind !== 'subchain';
+      nameEl.hidden = !nameable;
+      nameEl.value = nameable ? (seg.name || '') : '';
+      nameEl.placeholder = T('Segment name (optional)');
+      nameEl.setAttribute('aria-label', T('Segment name'));
     }
     UI.dpickPristine   = true;
     UI._setDpickFromSeconds(Math.max(0, seg.duration | 0));
@@ -3798,6 +3880,18 @@ const UI = {
   closeDurationPicker() {
     document.getElementById('duration-sheet').hidden = true;
     UI.durationTarget = null;
+  },
+
+  // v1.4.25 — the sheet's name field, live into the target segment.
+  _onDpickNameInput() {
+    const seg = UI.durationTarget;
+    const el = document.getElementById('dpick-name');
+    if (!seg || !el || seg.kind === 'subchain') return;
+    seg.name = el.value;
+    // Mirror into the row underneath so the list never disagrees with
+    // the sheet (no full re-render: that would rebuild every row).
+    const row = document.querySelector(`.segment-row[data-seg-id="${CSS.escape(seg.id)}"] .segment-name-input`);
+    if (row && row.value !== el.value) row.value = el.value;
   },
 
   // Encode a seconds count back into the 6-digit HHMMSS string.
@@ -3929,7 +4023,7 @@ const UI = {
       return true;
     });
     if (!candidates.length) {
-      list.innerHTML = `<li style="font-family: var(--f-serif); font-style: italic; color: var(--ink-dim); padding: 14px; text-align: center;">No other chains yet. Save this one and create another to embed.</li>`;
+      list.innerHTML = `<li style="font-family: var(--f-serif); font-style: italic; color: var(--ink-dim); padding: 14px; text-align: center;">${escape(T('No other chains yet. Save this one and create another to embed.'))}</li>`;
     }
     candidates.forEach(c => {
       const li = document.createElement('li');
@@ -3937,7 +4031,7 @@ const UI = {
       li.innerHTML = `
         <div>
           <div class="picker-item-name" style="color: ${colorHex(c.color)}">${escape(c.name)}</div>
-          <div class="picker-item-meta">${expandChain(c).length} segments · ${fmt(chainTotalSeconds(c))}</div>
+          <div class="picker-item-meta">${escape(Tn(expandChain(c).length, '{n} segment', '{n} segments'))} · ${fmt(chainTotalSeconds(c))}</div>
         </div>
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 6l6 6-6 6"/></svg>
       `;
@@ -3971,6 +4065,7 @@ const UI = {
     // that has no audible effect.
     UI._syncFinalTickRowVisibility();
     UI._syncAudioRoutePill();
+    UI._syncLanguagePill();
 
     const notifBtn = document.getElementById('enable-notifs');
     const status = document.getElementById('notif-status');
@@ -3986,9 +4081,9 @@ const UI = {
     const hideNotifRow = (window.ChainedNative?.isNative) || perm === 'unsupported';
     if (notifRow) notifRow.hidden = hideNotifRow;
     if (!hideNotifRow) {
-      if      (perm === 'granted') { notifBtn.textContent = 'Enabled';  notifBtn.disabled = true;  status.textContent = 'System notifications enabled.'; }
-      else if (perm === 'denied')  { notifBtn.textContent = 'Blocked';  notifBtn.disabled = true;  status.textContent = 'Notifications blocked in browser settings.'; }
-      else                         { notifBtn.disabled = false;         notifBtn.textContent = 'Enable'; }
+      if      (perm === 'granted') { notifBtn.textContent = T('Enabled');  notifBtn.disabled = true;  status.textContent = T('System notifications enabled.'); }
+      else if (perm === 'denied')  { notifBtn.textContent = T('Blocked');  notifBtn.disabled = true;  status.textContent = T('Notifications blocked in browser settings.'); }
+      else                         { notifBtn.disabled = false;         notifBtn.textContent = T('Enable'); }
     }
 
     // Native bridge panel — only visible when running inside Capacitor
@@ -4002,15 +4097,15 @@ const UI = {
       const body = document.getElementById('native-body');
       const title = document.getElementById('native-title');
 
-      title.textContent = `Native bridge — ${st.platform}`;
+      title.textContent = T('Native bridge — {p}', { p: st.platform });
 
       if (st.permission === 'granted' && st.channelReady) {
         dot.className = 'native-dot is-on';
-        badge.textContent = 'Active';
+        badge.textContent = T('Active');
         badge.className = 'badge is-on';
       } else if (st.permission === 'denied') {
         dot.className = 'native-dot is-warn';
-        badge.textContent = 'Blocked';
+        badge.textContent = T('Blocked');
         badge.className = 'badge is-warn';
       } else {
         dot.className = 'native-dot';
@@ -4058,15 +4153,15 @@ const UI = {
 
       if (notifBlocked) {
         dot.className = 'native-dot is-warn';
-        badge.textContent = 'Notifications blocked';
+        badge.textContent = T('Notifications blocked');
         badge.className = 'badge is-warn';
       } else if (needsExactFix) {
         dot.className = 'native-dot is-warn';
-        badge.textContent = 'Exact alarms denied';
+        badge.textContent = T('Exact alarms denied');
         badge.className = 'badge is-warn';
       } else if (needsBatteryFix) {
         dot.className = 'native-dot is-warn';
-        badge.textContent = 'Background restricted';
+        badge.textContent = T('Background restricted');
         badge.className = 'badge is-warn';
       }
     } else {
@@ -4079,13 +4174,13 @@ const UI = {
     // in-app flow.
     const verEl = document.getElementById('setting-version');
     if (verEl) {
-      let html = `Version ${escape(APP_VERSION)}`;
+      let html = escape(T('Version {v}', { v: APP_VERSION }));
       if (Updater.hasUpdate()) {
         // "Update available" instead of a version number when the Play
         // channel doesn't give us a name — spelling out "code N" is more
         // confusing than useful.
-        const label = Updater._channel === 'play' ? 'Update available' :
-                      `↑ ${escape(Updater.latestVersion() || 'newer')} available`;
+        const label = escape(Updater._channel === 'play' ? T('Update available') :
+                      T('↑ {v} available', { v: Updater.latestVersion() || T('newer') }));
         html += ` <a class="setting-version-update" href="#" data-open-update="1">${label}</a>`;
       }
       verEl.innerHTML = html;
@@ -4157,10 +4252,10 @@ const UI = {
       vibrate:   { title: 'Buzz cue',             hint: 'Vibrate when this segment ends.' },
     };
 
-    titleEl.textContent = isChain ? 'Chain cues' : 'Segment cues';
-    hintEl.textContent  = isChain
+    titleEl.textContent = T(isChain ? 'Chain cues' : 'Segment cues');
+    hintEl.textContent  = T(isChain
       ? 'Override the app defaults for this chain. Per-segment overrides win over these.'
-      : 'Override the chain defaults for this segment.';
+      : 'Override the chain defaults for this segment.');
 
     list.innerHTML = '';
     keys.forEach(key => {
@@ -4174,16 +4269,16 @@ const UI = {
 
       const head = document.createElement('div');
       head.className = 'cue-row-head';
-      const inheritedLabel = inheritedFromGlobal ? 'On' : 'Off';
+      const inheritedLabel = T(inheritedFromGlobal ? 'On' : 'Off');
       head.innerHTML = `
-        <span class="cue-row-title">${escape(meta.title)}</span>
-        <span class="cue-row-hint">${escape(meta.hint)}</span>`;
+        <span class="cue-row-title">${escape(T(meta.title))}</span>
+        <span class="cue-row-hint">${escape(T(meta.hint))}</span>`;
       row.appendChild(head);
 
       const pill = document.createElement('div');
       pill.className = 'cue-pill' + (meta.binary ? ' is-binary' : '');
       pill.setAttribute('role', 'radiogroup');
-      pill.setAttribute('aria-label', meta.title);
+      pill.setAttribute('aria-label', T(meta.title));
       // Binary cues have no inherited state, so "selected" is just the
       // stored boolean (absent = off) rather than the tri-state.
       const selectedState = meta.binary
@@ -4212,9 +4307,9 @@ const UI = {
         });
         return b;
       };
-      if (!meta.binary) pill.appendChild(mkBtn('default', 'Default', inheritedLabel));
-      pill.appendChild(mkBtn('on',  'On'));
-      pill.appendChild(mkBtn('off', 'Off'));
+      if (!meta.binary) pill.appendChild(mkBtn('default', T('Default'), inheritedLabel));
+      pill.appendChild(mkBtn('on',  T('On')));
+      pill.appendChild(mkBtn('off', T('Off')));
       row.appendChild(pill);
 
       // Hide finalTick row when the EFFECTIVE sound at this scope is off
@@ -4291,6 +4386,36 @@ const UI = {
       const row = document.getElementById(id);
       if (row) row.hidden = !on;
     }
+  },
+
+  _syncLanguagePill() {
+    const cur = I18n.setting;
+    document.querySelectorAll('#setting-language button[data-lang]').forEach(b => {
+      b.setAttribute('aria-pressed', String(b.dataset.lang === cur));
+    });
+  },
+
+  // v1.4.25 — switch the UI language live. Static markup is re-translated
+  // in place, every dynamic view is re-rendered, and running chains are
+  // re-sent to the foreground service so their notification labels (and,
+  // for an explicit choice, the voice language) follow.
+  applyLanguage(setting) {
+    if (!['auto', 'en', 'fr'].includes(setting)) return;
+    const before = I18n.lang;
+    Store.setSetting('language', setting);
+    I18n.init(setting);
+    I18n.applyStatic(document.body);
+    if (View.current === 'library')   UI.renderLibrary();
+    if (View.current === 'templates') UI.renderTemplates();
+    if (View.current === 'editor' && Editor.draft) UI.renderEditor();
+    if (View.current === 'run' && Engine.activeRunningCount() > 0) {
+      UI.updateRunSegmentInfo();
+      UI.renderRunChips();
+      UI._syncRunViewState();
+    }
+    UI.openSettings();
+    Engine.cuesChanged();
+    if (I18n.lang !== before) Toast.show('Language updated', 'good');
   },
 
   // Reflect the persisted audio-route value onto the 3-segment pill.
@@ -4373,13 +4498,13 @@ const UI = {
       const label = document.getElementById('run-dismiss-label');
       if (label) {
         label.textContent = isLast
-          ? `${run.chain?.name || 'Chain'} complete`
-          : `${seg?.name || 'Segment'} done`;
+          ? T('{name} complete', { name: run.chain?.name || T('Chain') })
+          : T('{name} done', { name: seg?.name || T('Segment') });
       }
       // v1.4.24 — mid-chain the button moves you on, so it says so;
       // only the chain's end is a plain Dismiss.
       const btn = document.getElementById('run-dismiss');
-      if (btn) btn.textContent = isLast ? 'Dismiss' : 'Continue';
+      if (btn) btn.textContent = T(isLast ? 'Dismiss' : 'Continue');
       UI._startOvertimeTicker();
     } else {
       UI._stopOvertimeTicker();
@@ -4626,7 +4751,7 @@ const UI = {
       chip.dataset.chainId = run.id;
       const dot   = document.createElement('span'); dot.className = 'run-chip-dot';
       const name  = document.createElement('span'); name.className = 'run-chip-name';
-      name.textContent = run.chain?.name || 'Chain';
+      name.textContent = run.chain?.name || T('Chain');
       const clock = document.createElement('span'); clock.className = 'run-chip-clock';
       const cur = run.segments[run.currentIndex];
       const remaining = cur ? Math.max(0, cur.duration - run._elapsedMs() / 1000) : 0;
@@ -4657,7 +4782,7 @@ const UI = {
       chip.className = 'run-chip is-pending' + (previewShown ? ' is-focused' : '');
       const dot   = document.createElement('span'); dot.className = 'run-chip-dot';
       const name  = document.createElement('span'); name.className = 'run-chip-name';
-      name.textContent = pending.name || 'Chain';
+      name.textContent = pending.name || T('Chain');
       const clock = document.createElement('span'); clock.className = 'run-chip-clock';
       clock.id = 'run-chip-pending-clock';
       clock.textContent = fmt(UI.prestartN);
@@ -4684,7 +4809,7 @@ const UI = {
       startX = e.clientX; startY = e.clientY;
       timer = setTimeout(() => {
         timer = null;
-        if (confirm(`Stop "${run.chain?.name || 'this chain'}"?`)) {
+        if (confirm(T('Stop "{name}"?', { name: run.chain?.name || T('this chain') }))) {
           Engine.stopRun(run.id);
         }
       }, UI.LONGPRESS_MS);
@@ -4714,8 +4839,8 @@ const UI = {
     if (!seg) return;
     UI._setRunChainName(Engine.chain?.name);
     UI._setRunSegmentName(seg.name);
-    document.getElementById('run-segment-tag').textContent = `Segment ${Engine.currentIndex + 1}`;
-    document.getElementById('run-segment-of').textContent  = `of ${Engine.segments.length}`;
+    document.getElementById('run-segment-tag').textContent = T('Segment {n}', { n: Engine.currentIndex + 1 });
+    document.getElementById('run-segment-of').textContent  = T('of {n}', { n: Engine.segments.length });
     document.getElementById('run-chain-pos').textContent   = `${Engine.currentIndex + 1} / ${Engine.segments.length}`;
 
     // chain progression strip
@@ -4798,8 +4923,8 @@ const UI = {
     // remaining" on a single-segment chain). Elapsed is derived as the
     // complement so elapsed + remaining always sums to the chain total.
     const totalRemDisplay = Math.ceil(totalRem);
-    document.getElementById('run-elapsed').textContent  = `${fmt(Math.max(0, totalChain - totalRemDisplay))} elapsed`;
-    document.getElementById('run-remaining').textContent = `${fmt(totalRemDisplay)} remaining`;
+    document.getElementById('run-elapsed').textContent  = T('{t} elapsed', { t: fmt(Math.max(0, totalChain - totalRemDisplay)) });
+    document.getElementById('run-remaining').textContent = T('{t} remaining', { t: fmt(totalRemDisplay) });
 
     // play/pause icon
     const ico = document.getElementById('run-toggle-icon');
@@ -4864,7 +4989,7 @@ const UI = {
 
     const cur     = run.segments[run.currentIndex];
     const next    = run.segments[run.currentIndex + 1];
-    const curName = cur?.name || 'Segment';
+    const curName = cur?.name || T('Segment');
     const nextName = next?.name || null;
 
     const line1 = document.createElement('div');
@@ -4877,8 +5002,8 @@ const UI = {
     const line2 = document.createElement('div');
     line2.className = 'chain-status-line2';
     line2.innerHTML =
-      `<span class="status-pos">Segment ${run.currentIndex + 1} of ${run.segments.length}</span>` +
-      (nextName ? `<span class="status-sep">·</span><span class="status-next">next: ${escape(nextName)}</span>` : '');
+      `<span class="status-pos">${escape(T('Segment {i} of {n}', { i: run.currentIndex + 1, n: run.segments.length }))}</span>` +
+      (nextName ? `<span class="status-sep">·</span><span class="status-next">${escape(T('next: {name}', { name: nextName }))}</span>` : '');
     body.appendChild(line2);
 
     const clock = document.createElement('div');
@@ -4931,12 +5056,12 @@ const UI = {
       // (run added / removed) re-renders the whole library via
       // Engine.onRunsChange.
       const seg = card.querySelector('.status-seg');
-      if (seg && cur) seg.textContent = cur.name || 'Segment';
+      if (seg && cur) seg.textContent = cur.name || T('Segment');
       const pos = card.querySelector('.status-pos');
-      if (pos) pos.textContent = `Segment ${run.currentIndex + 1} of ${run.segments.length}`;
+      if (pos) pos.textContent = T('Segment {i} of {n}', { i: run.currentIndex + 1, n: run.segments.length });
       const nxt = card.querySelector('.status-next');
       const nextSeg = run.segments[run.currentIndex + 1];
-      if (nxt) nxt.textContent = nextSeg ? `next: ${nextSeg.name || 'segment'}` : '';
+      if (nxt) nxt.textContent = nextSeg ? T('next: {name}', { name: nextSeg.name || T('segment') }) : '';
     });
   },
 
@@ -5042,8 +5167,8 @@ const UI = {
       if (!commit) return;
       const run = Engine.runById(runId);
       if (!run) return;
-      const name = run.chain?.name || 'this chain';
-      if (confirm(`Stop "${name}"?`)) {
+      const name = run.chain?.name || T('this chain');
+      if (confirm(T('Stop "{name}"?', { name }))) {
         Engine.stopRun(runId);
       }
       // Suppress the click event Chrome fires after a long pointerdown/up
@@ -5072,7 +5197,7 @@ const UI = {
       // Play channel doesn't hand us a semver — just an internal version
       // code — so we show "v1.4.4 → newer version" instead of "v1.4.4 →
       // code 25". Sideload/GitHub channel keeps the semver-both-sides shape.
-      const toLabel = Updater._channel === 'play' ? 'newer version' : `v${escape(latestVersion)}`;
+      const toLabel = Updater._channel === 'play' ? escape(T('newer version')) : `v${escape(latestVersion)}`;
       versEl.innerHTML =
         `<span class="from">v${escape(APP_VERSION)}</span>` +
         `<span class="arrow">→</span>` +
@@ -5087,11 +5212,11 @@ const UI = {
     if (hintEl) {
       const platform = window.Capacitor?.getPlatform?.() || 'web';
       if (Updater._channel === 'play') {
-        hintEl.textContent = 'Downloads and installs the update in-app via the Play Store.';
+        hintEl.textContent = T('Downloads and installs the update in-app via the Play Store.');
       } else if (platform === 'ios') {
-        hintEl.textContent = 'Opens the App Store listing.';
+        hintEl.textContent = T('Opens the App Store listing.');
       } else {
-        hintEl.textContent = 'Opens the GitHub Releases page — download the new APK and install it over the current one (your chains are preserved).';
+        hintEl.textContent = T('Opens the GitHub Releases page — download the new APK and install it over the current one (your chains are preserved).');
       }
     }
     modal.hidden = false;
@@ -5118,7 +5243,7 @@ const UI = {
     document.getElementById('run-complete-time').textContent = fmtLong(totalSeconds);
     document.getElementById('run-complete-count').textContent =
       Number.isFinite(segmentCount) ? segmentCount : Engine.segments.length;
-    document.getElementById('run-complete-title').textContent = 'Well done.';
+    document.getElementById('run-complete-title').textContent = T('Well done.');
   },
 
   hideCompletion() {
@@ -5240,6 +5365,9 @@ const UI = {
 
 function init() {
   Store.load();
+  // v1.4.25 — language first, so every render below is already in it.
+  I18n.init(Store.getSettings().language);
+  I18n.applyStatic(document.body);
   // v1.4.16 — remember when this install first ran, so the feedback
   // prompt can wait a few days rather than ambushing a new user.
   if (!Store.getSettings().firstLaunchAt) Store.setSetting('firstLaunchAt', Date.now());
@@ -5342,6 +5470,11 @@ function init() {
       Engine.activeRuns().forEach(r => { try { r._emit('chain:fgsupdate'); } catch {} });
     });
   }
+
+  // v1.4.25 — language pill (Auto / English / Français).
+  document.querySelectorAll('#setting-language button[data-lang]').forEach(btn => {
+    btn.addEventListener('click', () => UI.applyLanguage(btn.dataset.lang));
+  });
 
   // Audio routing pill (Headset only / Both / Speaker only)
   document.querySelectorAll('#setting-route button[data-route]').forEach(btn => {
@@ -5490,7 +5623,7 @@ function init() {
       Toast.show('Stop this chain to use the more menu', 'warn');
       return;
     }
-    document.getElementById('actions-title').textContent = Editor.draft.name || 'Chain';
+    document.getElementById('actions-title').textContent = Editor.draft.name || T('Chain');
     document.getElementById('actions-sheet').hidden = false;
   });
   document.getElementById('action-duplicate').addEventListener('click', () => {
@@ -5514,7 +5647,7 @@ function init() {
     Toast.show('Chain exported', 'good');
   });
   document.getElementById('action-delete').addEventListener('click', () => {
-    if (!confirm(`Delete "${Editor.draft.name}"? This cannot be undone.`)) return;
+    if (!confirm(T('Delete "{name}"? This cannot be undone.', { name: Editor.draft.name || T('Chain') }))) return;
     document.getElementById('actions-sheet').hidden = true;
     Store.deleteChain(Editor.draftId);
     Toast.show('Chain deleted', 'warn');
@@ -5543,6 +5676,15 @@ function init() {
     });
   });
   document.getElementById('dpick-confirm').addEventListener('click', () => UI.commitDurationPicker());
+  const dpickName = document.getElementById('dpick-name');
+  if (dpickName) {
+    dpickName.addEventListener('input', () => UI._onDpickNameInput());
+    // Enter (the keyboard's "done") just closes the keyboard: the
+    // duration still needs setting, and the keypad is right there.
+    dpickName.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); dpickName.blur(); }
+    });
+  }
 
   // Back arrow in run topbar + left-swipe gesture on the run view: return
   // to the library, KEEPING every active chain running. The library now-
@@ -5605,7 +5747,7 @@ function init() {
       input.className = 'run-chain-name-input';
       input.maxLength = 48;
       input.value = chain.name || '';
-      input.setAttribute('aria-label', 'Chain name');
+      input.setAttribute('aria-label', T('Chain name'));
       btn.replaceWith(input);
       // requestAnimationFrame so focus + select land after the DOM swap.
       requestAnimationFrame(() => { input.focus(); input.select(); });
@@ -5628,7 +5770,7 @@ function init() {
         nb.className = 'run-chain-name';
         nb.id = 'run-chain-name';
         nb.type = 'button';
-        nb.setAttribute('aria-label', 'Rename chain');
+        nb.setAttribute('aria-label', T('Rename chain'));
         nb.textContent = chain.name || '—';
         input.replaceWith(nb);
         UI.renderRunChips();
@@ -5683,8 +5825,8 @@ function init() {
       input.className = 'run-segment-name-input';
       input.maxLength = 48;
       input.value = srcName;
-      input.placeholder = 'Segment name';
-      input.setAttribute('aria-label', 'Segment name');
+      input.placeholder = T('Segment name');
+      input.setAttribute('aria-label', T('Segment name'));
       btn.replaceWith(input);
       requestAnimationFrame(() => { input.focus(); input.select(); });
 
@@ -5701,7 +5843,7 @@ function init() {
         nb.className = 'run-segment-name';
         nb.id = 'run-segment-name';
         nb.type = 'button';
-        nb.setAttribute('aria-label', 'Rename segment');
+        nb.setAttribute('aria-label', T('Rename segment'));
         const cur = Engine._focused?.segments?.[Engine._focused.currentIndex];
         nb.textContent = cur?.name || '—';
         input.replaceWith(nb);
@@ -5882,10 +6024,10 @@ function init() {
     }
     if (Engine.isRunning) {
       const otherRunning = Engine.activeRunningCount() > 1;
-      const focusedName = Engine.chain?.name || 'this chain';
+      const focusedName = Engine.chain?.name || T('this chain');
       const prompt = otherRunning
-        ? `Stop "${focusedName}"? Another chain will continue.`
-        : 'Stop this chain?';
+        ? T('Stop "{name}"? Another chain will continue.', { name: focusedName })
+        : T('Stop this chain?');
       if (!confirm(prompt)) return;
     }
     UI.cancelPrestart();           // ← prevent the queued startChain from firing
@@ -6007,7 +6149,7 @@ function init() {
   // chain. Confirm to prevent accidental stops mid-workout.
   document.getElementById('editor-locked-stop')?.addEventListener('click', () => {
     if (!Editor.draftId) return;
-    if (!confirm('Stop this chain?')) return;
+    if (!confirm(T('Stop this chain?'))) return;
     Engine.stopRun(Editor.draftId);
     UI.renderEditor();   // banner disappears
   });

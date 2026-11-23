@@ -113,6 +113,10 @@ public class ChainTimerService extends Service {
     public static final String EXTRA_AWAITING_DISMISS       = "awaitingDismiss";
     public static final String EXTRA_DISMISSED_AT_INDEX     = "dismissedAtIndex";
     public static final String EXTRA_SILENT                = "silent";
+    /** v1.4.25 — JS reached the natural end first and wants the finale. */
+    public static final String EXTRA_FINALE                = "finale";
+    /** v1.4.25 — {"key":"localized text",…} for notification labels. */
+    public static final String EXTRA_STRINGS_JSON          = "stringsJson";
     public static final String EXTRA_TICK_ENABLED          = "tickEnabled";
     public static final String EXTRA_SOUND_ENABLED         = "soundEnabled";
     public static final String EXTRA_VOICE_PATHS_JSON      = "voicePathsJson";
@@ -217,6 +221,14 @@ public class ChainTimerService extends Service {
         android.media.MediaPlayer chimePlayer;
         android.media.MediaPlayer finalThreePlayer;
         android.media.MediaPlayer finalePlayer;
+        // v1.4.25 — looping silence that keeps the output path awake
+        // around each boundary (see maybePrime), plus the runnables that
+        // start the 3-2-1 burst on time and check it once it is playing.
+        android.media.MediaPlayer primerPlayer;
+        long primerUntilMs = 0L;
+        Runnable primerStopRunnable;
+        Runnable finalThreeRunnable;
+        Runnable finalThreeSyncRunnable;
         // volatile so cross-thread visibility is guaranteed — the
         // MediaPlayer onCompletion/onError callbacks marshal back onto
         // the main thread, but a published-but-not-yet-marshalled write
@@ -290,7 +302,9 @@ public class ChainTimerService extends Service {
         // Refresh in-memory state from the intent. JS sends the full
         // plan on every START/UPDATE/COMPLETE so the service can self-
         // advance when the WebView is paused.
-        run.chainName = strOr(intent, EXTRA_CHAIN_NAME, "Chain");
+        String stringsJson = intent.getStringExtra(EXTRA_STRINGS_JSON);
+        if (stringsJson != null) applyLabels(stringsJson);
+        run.chainName = strOr(intent, EXTRA_CHAIN_NAME, L("chain", "Chain"));
         String planJson = intent.getStringExtra(EXTRA_PLAN_JSON);
         if (planJson != null) {
             List<Segment> parsed = parsePlan(planJson);
@@ -301,6 +315,8 @@ public class ChainTimerService extends Service {
         }
         int prevIndex = run.curIndex;
         long prevStartedAtMs = run.segStartedAtMs;
+        boolean prevSoundEnabled = run.soundEnabled;
+        boolean prevPaused = run.paused;
         run.curIndex = clampIndex(run, intent.getIntExtra(EXTRA_SEGMENT_INDEX, 0));
         run.segStartedAtMs = intent.getLongExtra(EXTRA_SEGMENT_STARTED_AT_MS, System.currentTimeMillis());
         run.paused = intent.getBooleanExtra(EXTRA_PAUSED, false);
@@ -314,6 +330,23 @@ public class ChainTimerService extends Service {
                 || Math.abs(run.segStartedAtMs - prevStartedAtMs) > 250L) {
             stopFinalThree(run);
         }
+        if (run.paused) stopPrimer(run);
+        // v1.4.25 — did JS just report a NATURAL boundary (the next
+        // segment, starting exactly where the previous one ended) that
+        // this service has not cued yet? In the foreground the WebView
+        // and the service's own tick race to the boundary; when the
+        // WebView's update landed first, the tick found nothing left to
+        // advance and the chime was never played (the JS chime is a
+        // no-op on native since v1.4.4) — the countdown went straight
+        // into the next segment's name.
+        boolean jsNaturalAdvance = wasKnown && !prevPaused && !run.paused
+            && prevIndex >= 0 && prevIndex < run.plan.size()
+            && run.curIndex == prevIndex + 1
+            && run.prevAlertIndex != run.curIndex
+            && Math.abs(run.segStartedAtMs
+                    - (prevStartedAtMs + run.plan.get(prevIndex).durationSec * 1000L)) <= 250L
+            // …and just now: a catch-up long after the fact is not a cue.
+            && Math.abs(System.currentTimeMillis() - run.segStartedAtMs) <= 1500L;
         run.pausedRemainingMs = Math.max(0L, intent.getLongExtra(EXTRA_PAUSED_REMAINING_MS, 0L));
         run.tickEnabled  = intent.getBooleanExtra(EXTRA_TICK_ENABLED, true);
         run.soundEnabled = intent.getBooleanExtra(EXTRA_SOUND_ENABLED, true);
@@ -376,13 +409,26 @@ public class ChainTimerService extends Service {
             // replaced by the completion entry inside completeRun).
             ensureFgsBinding(run);
             boolean silent = intent.getBooleanExtra(EXTRA_SILENT, false);
-            completeRun(run, !silent);
+            // v1.4.25 — JS reached the chain's natural end before the
+            // service's own tick did (the same race as the chime above),
+            // and asks for the finale it can't play itself on native.
+            // Only for a run this service was still tracking: if the tick
+            // got there first it already played the finale, and the run
+            // was re-created just now to carry this intent.
+            boolean finale = !silent
+                || (wasKnown && intent.getBooleanExtra(EXTRA_FINALE, false));
+            completeRun(run, !silent, finale);
             return START_NOT_STICKY;
         }
 
-        // ACTION_START or ACTION_UPDATE. JS-driven re-posts are silent
-        // (the in-app cue path already fired Audio.chime); we sync
+        // ACTION_START or ACTION_UPDATE. Re-posts are silent; we sync
         // prevAlertIndex so the next autonomous tick doesn't double-alert.
+        // The one exception is the boundary JS reached first (above): the
+        // service still owes it the chime, using the ENDING segment's
+        // sound cue, which is what the tick would have used.
+        if (jsNaturalAdvance && run.ringingAtIndex < 0) {
+            playCueSoundFrom(run, run.chimePlayer, 0, prevSoundEnabled);
+        }
         run.prevAlertIndex = run.curIndex;
 
         // "Fresh start" means JS thinks this is a brand-new run AND the
@@ -421,8 +467,9 @@ public class ChainTimerService extends Service {
             // playing. cancelTickFor above just dropped it.
             armRingLoop(run, /*immediate=*/false);
         } else if (!run.paused && !run.plan.isEmpty()) {
-            scheduleNextTick(run);
             maybeStartFinalThree(run);
+            scheduleNextTick(run);
+            maybePrime(run);
         }
 
         // Refresh the summary if 2+ runs are now active.
@@ -467,6 +514,8 @@ public class ChainTimerService extends Service {
 
     private void cancelTickFor(ChainRun run) {
         if (run.tickRunnable != null) tickHandler.removeCallbacks(run.tickRunnable);
+        // The burst's precise start is re-armed by every scheduleNextTick.
+        if (run.finalThreeRunnable != null) tickHandler.removeCallbacks(run.finalThreeRunnable);
         // v1.4.13 — the ring loop is scheduled work on this same handler,
         // so "cancel this run's pending work" must drop it too. State
         // flags are left alone (stopRinging owns those); teardown paths
@@ -535,7 +584,7 @@ public class ChainTimerService extends Service {
 
         if (run.curIndex >= run.plan.size()) {
             // Chain naturally ended without JS noticing first.
-            completeRun(run, /*alert=*/true);
+            completeRun(run, /*alert=*/true, /*finale=*/true);
             return;
         }
 
@@ -575,6 +624,7 @@ public class ChainTimerService extends Service {
         maybeStartFinalThree(run);
 
         scheduleNextTick(run);
+        maybePrime(run);
     }
 
     /**
@@ -596,6 +646,13 @@ public class ChainTimerService extends Service {
      * is then realigned in the silence after that pulse, so the next
      * ones still land on their digits. Further behind, the pulse is
      * skipped. Same rule as finalThreeOffsets() in js/app.js.
+     *
+     * v1.4.25 — "now" is when the sound will be HEARD, not when start()
+     * is called: the run's measured output lag (outputLagMs) is added,
+     * and armFinalThree() posts the start that much ahead of the 3 so the
+     * first pulse lands on its digit too. Every burst is then checked
+     * once it is playing (syncFinalThree), which both corrects it and
+     * keeps the lag estimate current.
      */
     private void maybeStartFinalThree(ChainRun run) {
         if (!run.tickEnabled || run.paused || run.ringingAtIndex >= 0) return;
@@ -603,51 +660,227 @@ public class ChainTimerService extends Service {
         if (run.curIndex < 0 || run.curIndex >= run.plan.size()) return;
         Segment cur = run.plan.get(run.curIndex);
         final long endMs = run.segStartedAtMs + cur.durationSec * 1000L;
-        long remMs = endMs - System.currentTimeMillis();
+        final long startWall = System.currentTimeMillis();
+        long remMs = endMs - (startWall + outputLagMs(run));
         // (ceil(remMs) <= 3s, same test the clock's digit uses)
         if (remMs <= 0L || remMs > 3000L) return;
         run.finalThreeStartedAtIndex = run.curIndex;
         long posMs = 3000L - remMs;            // where final3.wav should be now
         long intoPulse = posMs % 1000L;
         long pulseMs = posMs - intoPulse;      // onset of the pulse due last
+        long fromMs;
         if (intoPulse < 150L) {
-            playCueSoundFrom(run, run.finalThreePlayer, (int) pulseMs);
+            fromMs = pulseMs;
         } else if (intoPulse <= 500L) {
-            playCueSoundFrom(run, run.finalThreePlayer, (int) pulseMs);
-            final int idx = run.curIndex;
-            final long startedAt = run.segStartedAtMs;
-            tickHandler.postDelayed(() -> realignFinalThree(run, idx, startedAt, endMs), 200L);
+            fromMs = pulseMs;                  // late, but its digit is still up
         } else if (pulseMs < 2000L) {
-            playCueSoundFrom(run, run.finalThreePlayer, (int) posMs);
+            fromMs = posMs;                    // in the silence before the next pulse
+        } else {
+            return;                            // the last pulse is already behind us
         }
-        // else: the last pulse is already behind us.
+        if (!playCueSoundFrom(run, run.finalThreePlayer, (int) fromMs, run.soundEnabled)) return;
+        if (cueTraceOn()) {
+            android.util.Log.d(CUE_TAG, "final3 run=" + run.runId + " idx=" + run.curIndex
+                + " from=" + fromMs + " remHeard=" + remMs + " lag=" + outputLagMs(run));
+        }
+        // Check it once the pulse has played and its silence follows
+        // (pulses are ~130ms long): 450ms after a pulse onset, or right
+        // away if we started in a silence.
+        long checkIn = (fromMs % 1000L == 0L) ? 450L : 150L;
+        final int idx = run.curIndex;
+        final long startedAt = run.segStartedAtMs;
+        final long fromFinal = fromMs;
+        if (run.finalThreeSyncRunnable != null) tickHandler.removeCallbacks(run.finalThreeSyncRunnable);
+        run.finalThreeSyncRunnable = () -> syncFinalThree(run, idx, startedAt, endMs, startWall, fromFinal);
+        tickHandler.postDelayed(run.finalThreeSyncRunnable, checkIn);
     }
 
-    /** Seek a late-started burst back onto the clock, between pulses. */
-    private void realignFinalThree(ChainRun run, int idx, long startedAt, long endMs) {
-        if (!runs.containsValue(run) || run.paused) return;
+    /**
+     * v1.4.25 — post the burst's start for the moment its first pulse
+     * should be HEARD on the 3, rather than waiting for the per-second
+     * tick that lands on the 3 itself and then paying the output lag on
+     * top. Called from scheduleNextTick, so it is re-armed whenever the
+     * run's timing changes; a stale post re-validates before it fires.
+     */
+    private void armFinalThree(ChainRun run, long segEndMs, long now, long nextTickDelay) {
+        if (run.finalThreeRunnable != null) tickHandler.removeCallbacks(run.finalThreeRunnable);
+        if (!run.tickEnabled || run.paused || run.ringingAtIndex >= 0) return;
+        if (run.finalThreeStartedAtIndex == run.curIndex) return;
+        long d = (segEndMs - 3000L - outputLagMs(run)) - now;
+        if (d < 0L || d >= nextTickDelay) return;   // overdue (tick handles it) or not yet
+        final int idx = run.curIndex;
+        final long startedAt = run.segStartedAtMs;
+        run.finalThreeRunnable = () -> {
+            if (!runs.containsValue(run) || run.paused) return;
+            if (run.curIndex != idx || run.segStartedAtMs != startedAt) return;
+            maybeStartFinalThree(run);
+        };
+        tickHandler.postDelayed(run.finalThreeRunnable, d);
+    }
+
+    /**
+     * v1.4.25 — compare a playing burst with the clock, in a silence
+     * between pulses. MediaPlayer's position follows what has actually
+     * been played out, so "where the file should be by now if start()
+     * had been instant" minus "where it is" is this output's start lag:
+     * learned for the next burst. And "where the file should be for its
+     * pulses to fall on the digits" minus "where it is" is how far off
+     * THIS burst is: corrected now with a seek inside the same silence,
+     * so the remaining pulses land on their digits.
+     */
+    private void syncFinalThree(ChainRun run, int idx, long startedAt, long endMs,
+                                long startWall, long fromMs) {
+        run.finalThreeSyncRunnable = null;
+        if (!runs.containsValue(run) || run.paused || run.ringingAtIndex >= 0) return;
         if (run.curIndex != idx || run.segStartedAtMs != startedAt || run.finalThreeStartedAtIndex != idx) return;
         android.media.MediaPlayer mp = run.finalThreePlayer;
-        long posMs = 3000L - (endMs - System.currentTimeMillis());
-        if (mp == null || posMs < 0L || posMs >= 2150L) return;
+        if (mp == null) return;
         try {
             if (!mp.isPlaying()) return;
-            if (cueTraceOn()) android.util.Log.d(CUE_TAG, "realign run=" + run.runId + " to=" + posMs);
+            long now = System.currentTimeMillis();
+            long pos = mp.getCurrentPosition();
+            long lagSample = (fromMs + (now - startWall)) - pos;
+            if (lagSample >= 0L && lagSample <= MAX_OUTPUT_LAG_MS) learnOutputLag(run, lagSample);
+            long ideal = 3000L - (endMs - now);           // what should be heard now
+            long drift = ideal - pos;                      // > 0: we are late
+            if (cueTraceOn()) {
+                android.util.Log.d(CUE_TAG, "final3-sync run=" + run.runId + " pos=" + pos
+                    + " ideal=" + ideal + " drift=" + drift + " lagSample=" + lagSample
+                    + " lag=" + outputLagMs(run));
+            }
+            if (Math.abs(drift) < 40L || Math.abs(drift) > 700L) return;
+            if (pos % 1000L < 150L || pos >= 2150L) return; // only from a silence
+            // A seek restarts output, which costs the lag again.
+            long target = ideal + outputLagMs(run);
+            long gapStart = (pos / 1000L) * 1000L + 150L;
+            long gapEnd   = (pos / 1000L + 1L) * 1000L - 5L; // just before the next pulse
+            if (target > gapEnd) target = gapEnd;
+            if (target < gapStart || target >= 2995L) return;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                mp.seekTo(posMs, android.media.MediaPlayer.SEEK_CLOSEST);
+                mp.seekTo(target, android.media.MediaPlayer.SEEK_CLOSEST);
             } else {
-                mp.seekTo((int) posMs);
+                mp.seekTo((int) target);
             }
         } catch (Throwable ignored) {}
+    }
+
+    /** Upper bound on a believable output start lag. Anything larger is
+     *  an outlier (a path that was still waking up), not the steady state. */
+    private static final long MAX_OUTPUT_LAG_MS = 350L;
+    /** Learned per output policy (stream + route): the same lag applies to
+     *  every run that plays through it, and survives between chains. */
+    private final Map<String, Long> outputLagByPolicy = new HashMap<>();
+
+    private String lagKey(ChainRun run) {
+        return (run.ringThroughDnd ? "alarm" : "media") + "|" + run.audioRoute;
+    }
+
+    private long outputLagMs(ChainRun run) {
+        Long v = outputLagByPolicy.get(lagKey(run));
+        return v == null ? 0L : v;
+    }
+
+    private void learnOutputLag(ChainRun run, long sample) {
+        String key = lagKey(run);
+        Long prev = outputLagByPolicy.get(key);
+        long next = prev == null ? sample : Math.round(prev * 0.6 + sample * 0.4);
+        outputLagByPolicy.put(key, Math.max(0L, Math.min(MAX_OUTPUT_LAG_MS, next)));
     }
 
     /** Silence a burst that no longer belongs (pause, or its segment was
      *  left or restarted), and let the segment arm a fresh one. */
     private void stopFinalThree(ChainRun run) {
         run.finalThreeStartedAtIndex = -1;
+        if (run.finalThreeRunnable != null) tickHandler.removeCallbacks(run.finalThreeRunnable);
+        if (run.finalThreeSyncRunnable != null) {
+            tickHandler.removeCallbacks(run.finalThreeSyncRunnable);
+            run.finalThreeSyncRunnable = null;
+        }
         android.media.MediaPlayer mp = run.finalThreePlayer;
         if (mp == null) return;
         try { if (mp.isPlaying()) mp.pause(); } catch (Throwable ignored) {}
+    }
+
+    // --- Output primer (v1.4.25) -----------------------------------
+    //
+    // An audio output with nothing playing goes to standby after a few
+    // seconds, and a Bluetooth A2DP link suspends its stream. The first
+    // sound after that waits for the path to wake up — tens of ms on a
+    // phone speaker, up to a second or more on some headsets — and that
+    // wait was landing on the 3-2-1: its first pulse delayed or clipped,
+    // the whole burst late, and the boundary update then cutting it off
+    // ("only chimed 3-2, then right away the segment name"). So from
+    // PRIME_LEAD_MS before each boundary until PRIME_TAIL_MS after it,
+    // a looping silent player keeps the same output (same usage, same
+    // route) awake, and the burst, chime and voice start on a live path.
+    // Silence only: nothing is heard, and no audio focus is requested,
+    // so the user's own music is untouched.
+
+    private static final long PRIME_LEAD_MS = 5500L;
+    private static final long PRIME_TAIL_MS = 2500L;
+
+    private void maybePrime(ChainRun run) {
+        if (run.paused || run.ringingAtIndex >= 0) return;
+        if (run.curIndex < 0 || run.curIndex >= run.plan.size()) return;
+        int next = run.curIndex + 1;
+        boolean nextVoice = next < run.voicePaths.size() && run.voicePaths.get(next) != null
+            && (next >= run.voiceEnabled.size() || Boolean.TRUE.equals(run.voiceEnabled.get(next)));
+        if (!run.soundEnabled && !nextVoice) return;
+        long endMs = run.segStartedAtMs + run.plan.get(run.curIndex).durationSec * 1000L;
+        if (endMs - System.currentTimeMillis() > PRIME_LEAD_MS) return;
+        ensurePrimer(run, endMs + PRIME_TAIL_MS);
+    }
+
+    private void ensurePrimer(ChainRun run, long untilMs) {
+        try {
+            if (run.primerPlayer == null) {
+                int usage = run.ringThroughDnd
+                    ? AudioAttributes.USAGE_ALARM
+                    : AudioAttributes.USAGE_MEDIA;
+                run.primerPlayer = createPreparedPlayer(R.raw.silence, usage);
+                run.primerPlayer.setLooping(true);
+                try { run.primerPlayer.setPreferredDevice(pickPreferredOutputDevice(run.audioRoute)); }
+                catch (Throwable ignored) {}
+            }
+            if (untilMs > run.primerUntilMs) run.primerUntilMs = untilMs;
+            if (!run.primerPlayer.isPlaying()) {
+                run.primerPlayer.start();
+                if (cueTraceOn()) android.util.Log.d(CUE_TAG, "primer-on run=" + run.runId);
+            }
+            if (run.primerStopRunnable == null) {
+                run.primerStopRunnable = () -> {
+                    long left = run.primerUntilMs - System.currentTimeMillis();
+                    if (left > 20L) { tickHandler.postDelayed(run.primerStopRunnable, left); return; }
+                    stopPrimer(run);
+                };
+            }
+            tickHandler.removeCallbacks(run.primerStopRunnable);
+            tickHandler.postDelayed(run.primerStopRunnable,
+                Math.max(0L, run.primerUntilMs - System.currentTimeMillis()));
+        } catch (Throwable t) {
+            releasePrimer(run);
+        }
+    }
+
+    private void stopPrimer(ChainRun run) {
+        run.primerUntilMs = 0L;
+        if (run.primerStopRunnable != null) tickHandler.removeCallbacks(run.primerStopRunnable);
+        android.media.MediaPlayer mp = run.primerPlayer;
+        if (mp == null) return;
+        try {
+            if (mp.isPlaying()) {
+                mp.pause();
+                if (cueTraceOn()) android.util.Log.d(CUE_TAG, "primer-off run=" + run.runId);
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    private void releasePrimer(ChainRun run) {
+        stopPrimer(run);
+        if (run.primerPlayer != null) {
+            try { run.primerPlayer.release(); } catch (Throwable ignored) {}
+            run.primerPlayer = null;
+        }
     }
 
     private boolean isAppForegroundSafe() {
@@ -667,6 +900,7 @@ public class ChainTimerService extends Service {
         if (delay < 16L) delay = 16L;
         if (run.tickRunnable == null) run.tickRunnable = () -> onTickForRun(run);
         tickHandler.postDelayed(run.tickRunnable, delay);
+        armFinalThree(run, segEndMs, now, delay);
     }
 
     // --- Stop / complete ------------------------------------------
@@ -734,6 +968,12 @@ public class ChainTimerService extends Service {
      *              foreground) the entry is posted silently.
      */
     private void completeRun(ChainRun run, boolean alert) {
+        completeRun(run, alert, alert);
+    }
+
+    /** @param finale play the finale cue (subject to the run's sound cue,
+     *  except when JS asked for it explicitly — see ACTION_COMPLETE). */
+    private void completeRun(ChainRun run, boolean alert, boolean finale) {
         cancelTickFor(run);
         stopRinging(run);
         gateStates.remove(run.runId);
@@ -743,8 +983,9 @@ public class ChainTimerService extends Service {
         // state (see boundary-alert block for rationale). alert=false is
         // still respected — it means the JS engine already handled a
         // silent completion path.
-        boolean playedFinale = alert;
+        boolean playedFinale = finale;
         if (playedFinale) playFinale(run);
+        stopPrimer(run);
 
         boolean wasFgsOwner = run.runId.equals(fgsOwnerRunId);
 
@@ -810,9 +1051,11 @@ public class ChainTimerService extends Service {
     }
 
     private void postCompletionNotification(NotificationManager nm, ChainRun run, boolean alert) {
-        String safeName = (run.chainName == null || run.chainName.isEmpty()) ? "Chain" : run.chainName;
+        String safeName = (run.chainName == null || run.chainName.isEmpty()) ? L("chain", "Chain") : run.chainName;
         int total = run.plan.size();
-        String body = total == 1 ? "1 segment done" : total + " segments done";
+        String body = total == 1
+            ? L("segmentsDone1", "1 segment done")
+            : fmtLabel(L("segmentsDone", "{n} segments done"), "n", String.valueOf(total));
 
         Intent appIntent = new Intent(this, MainActivity.class);
         appIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
@@ -823,7 +1066,7 @@ public class ChainTimerService extends Service {
         NotificationCompat.Builder b = new NotificationCompat.Builder(this, CHANNEL_FINALE)
             .setSmallIcon(R.drawable.ic_stat_icon)
             .setColor(0xFFF5B042)
-            .setContentTitle("✓ " + safeName + " complete")
+            .setContentTitle("✓ " + fmtLabel(L("complete", "{name} complete"), "name", safeName))
             .setContentText(body)
             .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
             .setContentIntent(pi)
@@ -935,7 +1178,7 @@ public class ChainTimerService extends Service {
         int count = 0;
         for (ChainRun r : runs.values()) {
             if (count++ > 0) names.append(" · ");
-            names.append((r.chainName == null || r.chainName.isEmpty()) ? "Chain" : r.chainName);
+            names.append((r.chainName == null || r.chainName.isEmpty()) ? L("chain", "Chain") : r.chainName);
         }
         Intent appIntent = new Intent(this, MainActivity.class);
         appIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
@@ -946,7 +1189,7 @@ public class ChainTimerService extends Service {
         Notification summary = new NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_icon)
             .setColor(0xFFF5B042)
-            .setContentTitle(runs.size() + " chains running")
+            .setContentTitle(fmtLabel(L("chainsRunning", "{n} chains running"), "n", String.valueOf(runs.size())))
             .setContentText(names.toString())
             .setStyle(new NotificationCompat.BigTextStyle().bigText(names.toString()))
             .setContentIntent(pi)
@@ -977,10 +1220,28 @@ public class ChainTimerService extends Service {
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
             .build();
 
-        if (nm.getNotificationChannel(CHANNEL_ID) == null) {
+        // v1.4.25 — channel names follow the device language (values-fr).
+        // Re-creating an existing channel only updates its name and
+        // description, so this also renames channels made before.
+        String fgName = getString(R.string.channel_transitions);
+        String endName = getString(R.string.channel_complete);
+        NotificationChannel existingFg = nm.getNotificationChannel(CHANNEL_ID);
+        if (existingFg != null && !fgName.contentEquals(existingFg.getName())) {
+            NotificationChannel upd = new NotificationChannel(CHANNEL_ID, fgName, existingFg.getImportance());
+            upd.setDescription(getString(R.string.channel_transitions_desc));
+            nm.createNotificationChannel(upd);
+        }
+        NotificationChannel existingEnd = nm.getNotificationChannel(CHANNEL_FINALE);
+        if (existingEnd != null && !endName.contentEquals(existingEnd.getName())) {
+            NotificationChannel upd = new NotificationChannel(CHANNEL_FINALE, endName, existingEnd.getImportance());
+            upd.setDescription(getString(R.string.channel_complete_desc));
+            nm.createNotificationChannel(upd);
+        }
+
+        if (existingFg == null) {
             NotificationChannel ch = new NotificationChannel(
-                CHANNEL_ID, "Chain transitions", NotificationManager.IMPORTANCE_HIGH);
-            ch.setDescription("Persistent chain status + segment-boundary alert");
+                CHANNEL_ID, fgName, NotificationManager.IMPORTANCE_HIGH);
+            ch.setDescription(getString(R.string.channel_transitions_desc));
             ch.setShowBadge(false);
             ch.enableLights(true);
             ch.setLightColor(0xFFF5B042);
@@ -989,10 +1250,10 @@ public class ChainTimerService extends Service {
             ch.setBypassDnd(true);
             nm.createNotificationChannel(ch);
         }
-        if (nm.getNotificationChannel(CHANNEL_FINALE) == null) {
+        if (existingEnd == null) {
             NotificationChannel ch = new NotificationChannel(
-                CHANNEL_FINALE, "Chain complete", NotificationManager.IMPORTANCE_HIGH);
-            ch.setDescription("Heads-up entry when a chain naturally ends");
+                CHANNEL_FINALE, endName, NotificationManager.IMPORTANCE_HIGH);
+            ch.setDescription(getString(R.string.channel_complete_desc));
             ch.setShowBadge(false);
             ch.enableLights(true);
             ch.setLightColor(0xFFF5B042);
@@ -1022,22 +1283,26 @@ public class ChainTimerService extends Service {
         // (Continue); only the chain's own end is a Dismiss.
         boolean endGate = ringing && run.curIndex >= total - 1;
         String prefix = ringing ? "⏰" : (run.paused ? "⏸" : "▶");
-        String segName = (cur != null && cur.name != null && !cur.name.isEmpty()) ? cur.name : "Segment";
+        String segName = (cur != null && cur.name != null && !cur.name.isEmpty()) ? cur.name : L("segment", "Segment");
         // A held gate reads as a finished timer, not a ticking one: no
         // countdown in the title, since nothing is counting.
         String title = ringing
-            ? (endGate ? (run.chainName + " complete · tap Dismiss") : (segName + " done · tap Continue"))
+            ? (endGate ? fmtLabel(L("endGateTitle", "{name} complete · tap Dismiss"), "name", run.chainName)
+                       : fmtLabel(L("gateTitle", "{name} done · tap Continue"), "name", segName))
             : (prefix + " " + segName + " · " + fmtClock(remainingSec));
-        String body = "Segment " + (run.curIndex + 1) + " of " + total + " · " + run.chainName;
+        String segOf = fmtLabel(fmtLabel(L("segOf", "Segment {i} of {n}"),
+            "i", String.valueOf(run.curIndex + 1)), "n", String.valueOf(total));
+        String body = segOf + " · " + run.chainName;
         String sub  = (run.curIndex + 1) + "/" + total;
         StringBuilder large = new StringBuilder();
-        large.append(run.chainName).append(" · Segment ").append(run.curIndex + 1).append(" of ").append(total).append('\n');
+        large.append(run.chainName).append(" · ").append(segOf).append('\n');
         if (cur != null) large.append(segName).append(" — ").append(fmtDur(cur.durationSec)).append('\n');
         if (next != null) {
-            String nextName = (next.name != null && !next.name.isEmpty()) ? next.name : "segment";
-            large.append("Next: ").append(nextName).append(" (").append(fmtDur(next.durationSec)).append(")");
+            String nextName = (next.name != null && !next.name.isEmpty()) ? next.name : L("segmentLower", "segment");
+            large.append(fmtLabel(L("next", "Next: {name}"), "name", nextName))
+                 .append(" (").append(fmtDur(next.durationSec)).append(")");
         } else {
-            large.append("Last segment");
+            large.append(L("lastSegment", "Last segment"));
         }
 
         NotificationCompat.Builder b = new NotificationCompat.Builder(this, CHANNEL_ID)
@@ -1087,10 +1352,10 @@ public class ChainTimerService extends Service {
         // is Dismiss, alone: Dismiss already ends the chain there, and a
         // Stop beside it read as a second, different way out.
         if (ringing) {
-            b.addAction(R.drawable.ic_notif_play, endGate ? "Dismiss" : "Continue",
+            b.addAction(R.drawable.ic_notif_play, endGate ? L("dismiss", "Dismiss") : L("continue", "Continue"),
                 commandPendingIntent(run.runId, COMMAND_DISMISS, 14));
             if (!endGate) {
-                b.addAction(R.drawable.ic_notif_stop, "Stop chain",
+                b.addAction(R.drawable.ic_notif_stop, L("stopChain", "Stop chain"),
                     commandPendingIntent(run.runId, COMMAND_STOP, 12));
             }
             return b.build();
@@ -1104,21 +1369,51 @@ public class ChainTimerService extends Service {
             : (run.curIndex < total - 1);
 
         if (hasPrev) {
-            b.addAction(R.drawable.ic_notif_prev, "Previous segment",
+            b.addAction(R.drawable.ic_notif_prev, L("prevSegment", "Previous segment"),
                 commandPendingIntent(run.runId, COMMAND_SKIP_PREV, 10));
         }
         b.addAction(
             run.paused ? R.drawable.ic_notif_play : R.drawable.ic_notif_pause,
-            run.paused ? "Resume" : "Pause",
+            run.paused ? L("resume", "Resume") : L("pause", "Pause"),
             commandPendingIntent(run.runId, run.paused ? COMMAND_RESUME : COMMAND_PAUSE, 11));
         if (hasNext) {
-            b.addAction(R.drawable.ic_notif_next, "Next segment",
+            b.addAction(R.drawable.ic_notif_next, L("nextSegment", "Next segment"),
                 commandPendingIntent(run.runId, COMMAND_SKIP_NEXT, 13));
         }
-        b.addAction(R.drawable.ic_notif_stop, "Stop chain",
+        b.addAction(R.drawable.ic_notif_stop, L("stopChain", "Stop chain"),
             commandPendingIntent(run.runId, COMMAND_STOP, 12));
 
         return b.build();
+    }
+
+    // --- Localized labels (v1.4.25) --------------------------------
+    //
+    // The app's language is a setting inside the WebView (Auto / English /
+    // Français), not necessarily the device locale, so Android string
+    // resources can't follow it. JS sends the notification labels with
+    // every start/update instead; English is the fallback for any key
+    // not received yet.
+    private final Map<String, String> labels = new HashMap<>();
+
+    private void applyLabels(String json) {
+        try {
+            JSONObject o = new JSONObject(json);
+            java.util.Iterator<String> it = o.keys();
+            while (it.hasNext()) {
+                String k = it.next();
+                String v = o.optString(k, null);
+                if (v != null && !v.isEmpty()) labels.put(k, v);
+            }
+        } catch (JSONException ignored) {}
+    }
+
+    private String L(String key, String fallback) {
+        String v = labels.get(key);
+        return v != null ? v : fallback;
+    }
+
+    private static String fmtLabel(String template, String name, String value) {
+        return template.replace("{" + name + "}", value == null ? "" : value);
     }
 
     private long computeRemainingSec(ChainRun run, Segment cur) {
@@ -1252,6 +1547,7 @@ public class ChainTimerService extends Service {
                 run.paused = true;
                 cancelTickFor(run);
                 stopFinalThree(run);
+                stopPrimer(run);
                 updated = true;
             }
         } else if (COMMAND_RESUME.equals(cmd)) {
@@ -1261,6 +1557,7 @@ public class ChainTimerService extends Service {
                 run.paused = false;
                 scheduleNextTick(run);
                 maybeStartFinalThree(run);
+                maybePrime(run);
                 updated = true;
             }
         } else if (COMMAND_SKIP_NEXT.equals(cmd)) {
@@ -1275,6 +1572,7 @@ public class ChainTimerService extends Service {
                 cancelTickFor(run);
                 scheduleNextTick(run);
                 maybeStartFinalThree(run);
+                maybePrime(run);
                 updated = true;
             } else if (cur != null) {
                 ChainTimerPlugin.deliverChainCommand(cmd, runId);
@@ -1297,6 +1595,7 @@ public class ChainTimerService extends Service {
             cancelTickFor(run);
             scheduleNextTick(run);
             maybeStartFinalThree(run);
+            maybePrime(run);
             updated = true;
         }
 
@@ -1451,6 +1750,7 @@ public class ChainTimerService extends Service {
         cancelTickFor(run);
         scheduleNextTick(run);
         maybeStartFinalThree(run);
+        maybePrime(run);
         pushRunNotification(run, /*alert=*/false);
     }
 
@@ -1547,6 +1847,7 @@ public class ChainTimerService extends Service {
         if (run.chimePlayer      != null) try { run.chimePlayer.setPreferredDevice(preferred); }      catch (Throwable ignored) {}
         if (run.finalThreePlayer != null) try { run.finalThreePlayer.setPreferredDevice(preferred); } catch (Throwable ignored) {}
         if (run.finalePlayer     != null) try { run.finalePlayer.setPreferredDevice(preferred); }     catch (Throwable ignored) {}
+        if (run.primerPlayer     != null) try { run.primerPlayer.setPreferredDevice(preferred); }     catch (Throwable ignored) {}
     }
 
     /** v1.4.21 — debug-only cue trace. Live cue changes are decided in
@@ -1565,15 +1866,21 @@ public class ChainTimerService extends Service {
     }
 
     private void playCueSound(ChainRun run, android.media.MediaPlayer mp) {
-        playCueSoundFrom(run, mp, 0);
+        playCueSoundFrom(run, mp, 0, run.soundEnabled);
     }
 
-    private void playCueSoundFrom(ChainRun run, android.media.MediaPlayer mp, int fromMs) {
+    /** @param soundOn the sound cue that governs THIS cue — usually the
+     *  run's current flag, but a boundary chime owed after JS already
+     *  moved the run on belongs to the segment that ended.
+     *  @return whether playback was started. */
+    private boolean playCueSoundFrom(ChainRun run, android.media.MediaPlayer mp, int fromMs, boolean soundOn) {
         if (cueTraceOn()) {
-            android.util.Log.d(CUE_TAG, "cue run=" + run.runId + " sound=" + run.soundEnabled
-                + " ringing=" + run.ringingAtIndex + " from=" + fromMs);
+            android.util.Log.d(CUE_TAG, "cue run=" + run.runId + " sound=" + soundOn
+                + " ringing=" + run.ringingAtIndex + " from=" + fromMs
+                + " which=" + (mp == null ? "null" : mp == run.chimePlayer ? "chime"
+                    : mp == run.finalThreePlayer ? "final3" : mp == run.finalePlayer ? "finale" : "?"));
         }
-        if (!run.soundEnabled || mp == null) return;
+        if (!soundOn || mp == null) return false;
         try {
             if (mp.isPlaying()) mp.pause();
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -1584,7 +1891,10 @@ public class ChainTimerService extends Service {
             // Warmed players are parked at volume 0 (warmOneCue).
             mp.setVolume(1f, 1f);
             mp.start();
-        } catch (Throwable ignored) {}
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     /**
@@ -1635,6 +1945,11 @@ public class ChainTimerService extends Service {
         if (run.chimePlayer != null)      { try { run.chimePlayer.release(); }      catch (Throwable ignored) {} run.chimePlayer = null; }
         if (run.finalThreePlayer != null) { try { run.finalThreePlayer.release(); } catch (Throwable ignored) {} run.finalThreePlayer = null; }
         if (run.finalePlayer != null)     { try { run.finalePlayer.release(); }     catch (Throwable ignored) {} run.finalePlayer = null; }
+        if (run.finalThreeSyncRunnable != null) {
+            tickHandler.removeCallbacks(run.finalThreeSyncRunnable);
+            run.finalThreeSyncRunnable = null;
+        }
+        releasePrimer(run);
     }
 
     private void maybePlayVoiceForSegment(ChainRun run, int segIdx) {

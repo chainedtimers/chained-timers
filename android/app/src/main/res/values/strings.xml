@@ -4,4 +4,8 @@
     <string name="title_activity_main">Chained Timers</string>
     <string name="package_name">com.github.chainedtimers</string>
     <string name="custom_url_scheme">com.github.chainedtimers</string>
+    <string name="channel_transitions">Chain transitions</string>
+    <string name="channel_transitions_desc">Persistent chain status + segment-boundary alert</string>
+    <string name="channel_complete">Chain complete</string>
+    <string name="channel_complete_desc">Heads-up entry when a chain naturally ends</string>
 </resources>

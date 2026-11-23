@@ -84,7 +84,8 @@ async function spokenLangFor(locale) {
 console.log('Test A: web speech follows the browser language, not <html lang>');
 {
   const fr = await spokenLangFor('fr-FR');
-  eq(fr.docLang, 'en', 'document still declares lang=en (UI is English)');
+  // v1.4.25 — the UI itself is French for a French browser now (Auto).
+  eq(fr.docLang, 'fr', 'document declares lang=fr (UI follows the browser)');
   eq(fr.navLang, 'fr-FR', 'browser locale is French');
   eq(fr.preferred, 'fr-FR', 'Voice.preferredLang() resolves to the browser language');
   // Voice.warmupForChain primes the engine with a blank, volume-0

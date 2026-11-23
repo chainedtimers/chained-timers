@@ -300,6 +300,41 @@
     return true;
   }
 
+  // v1.4.25 — UI strings go through the app's localisation (js/i18n.js,
+  // loaded before this file). Falls back to the English text, with the
+  // placeholders filled in, if it is somehow missing.
+  function L(str, params) {
+    if (typeof window.T === 'function') return window.T(str, params);
+    return params ? String(str).replace(/\{(\w+)\}/g, (m, k) => (k in params ? String(params[k]) : m)) : str;
+  }
+
+  // Labels the foreground service uses to build its own notifications
+  // (it renders them natively, every second, with no JS awake). Sent
+  // with every start/update; placeholders are filled in on the Java side.
+  function notifLabels() {
+    return {
+      chain:         L('Chain'),
+      segment:       L('Segment'),
+      segmentLower:  L('segment'),
+      segOf:         L('Segment {i} of {n}'),
+      next:          L('Next: {name}'),
+      lastSegment:   L('Last segment'),
+      complete:      L('{name} complete'),
+      segmentsDone1: L('1 segment done'),
+      segmentsDone:  L('{n} segments done'),
+      endGateTitle:  L('{name} complete · tap Dismiss'),
+      gateTitle:     L('{name} done · tap Continue'),
+      dismiss:       L('Dismiss'),
+      continue:      L('Continue'),
+      stopChain:     L('Stop chain'),
+      prevSegment:   L('Previous segment'),
+      resume:        L('Resume'),
+      pause:         L('Pause'),
+      nextSegment:   L('Next segment'),
+      chainsRunning: L('{n} chains running'),
+    };
+  }
+
   function fmtDur(s) {
     if (s < 60) return `${s}s`;
     const m = Math.floor(s / 60), r = s % 60;
@@ -364,12 +399,13 @@
     const total = segments.length;
 
     const titlePrefix = isPaused ? '⏸' : '▶';
-    const title  = `${titlePrefix} ${cur.name || 'Segment'} · ${fmtDur(cur.duration)}`;
-    const body   = `Segment ${currentIndex + 1} of ${total} · ${name || 'Chain'}`;
+    const segOf  = L('Segment {i} of {n}', { i: currentIndex + 1, n: total });
+    const title  = `${titlePrefix} ${cur.name || L('Segment')} · ${fmtDur(cur.duration)}`;
+    const body   = `${segOf} · ${name || L('Chain')}`;
     const lines  = [
-      `${name || 'Chain'} · Segment ${currentIndex + 1} of ${total}`,
-      `${cur.name || 'Segment'} — ${fmtDur(cur.duration)}`,
-      next ? `Next: ${next.name || 'segment'} (${fmtDur(next.duration)})` : 'Last segment',
+      `${name || L('Chain')} · ${segOf}`,
+      `${cur.name || L('Segment')} — ${fmtDur(cur.duration)}`,
+      next ? `${L('Next: {name}', { name: next.name || L('segment') })} (${fmtDur(next.duration)})` : L('Last segment'),
     ];
 
     try {
@@ -476,7 +512,7 @@
   // in the background; we rely on UNUserNotificationCenter scheduling).
   function buildStatusContent(detail) {
     const { name, segments, currentIndex = 0, isPaused, segmentStartedAtMs, pausedAtMs = 0, tickEnabled = true, soundEnabled = true, voicePaths = null, voiceEnabled = null, audioRoute = 'headset', ringThroughDnd = false, runId = null, awaitingDismiss = false, dismissedAtIndex = -1, vibrateEnabled = true } = detail;
-    const cur = segments[currentIndex] || { name: 'Segment', duration: 0 };
+    const cur = segments[currentIndex] || { name: L('Segment'), duration: 0 };
     const next = segments[currentIndex + 1];
     const total = segments.length;
     const titlePrefix = isPaused ? '⏸' : '▶';
@@ -505,23 +541,29 @@
     // The service needs it in its own plan copy because the gate has to
     // hold while the WebView is asleep, i.e. with no JS to notice.
     const planJson = JSON.stringify(segments.map(s => ({
-      n: s.name || 'Segment',
+      n: s.name || L('Segment'),
       d: Math.max(0, s.duration | 0),
       ...(s.ringUntilDismissed ? { r: 1 } : {}),
     })));
+    const segOf = L('Segment {i} of {n}', { i: currentIndex + 1, n: total });
     return {
-      title:    `${titlePrefix} ${cur.name || 'Segment'}`,
-      body:     `Segment ${currentIndex + 1} of ${total} · ${name || 'Chain'}`,
+      title:    `${titlePrefix} ${cur.name || L('Segment')}`,
+      body:     `${segOf} · ${name || L('Chain')}`,
       largeBody: [
-        `${name || 'Chain'} · Segment ${currentIndex + 1} of ${total}`,
-        `${cur.name || 'Segment'} — ${fmtDur(cur.duration)}`,
-        next ? `Next: ${next.name || 'segment'} (${fmtDur(next.duration)})` : 'Last segment',
+        `${name || L('Chain')} · ${segOf}`,
+        `${cur.name || L('Segment')} — ${fmtDur(cur.duration)}`,
+        next ? `${L('Next: {name}', { name: next.name || L('segment') })} (${fmtDur(next.duration)})` : L('Last segment'),
       ].join('\n'),
       subText:  `${currentIndex + 1}/${total}`,
       paused:   !!isPaused,
       endTimeMs,
       pausedRemainingMs,
-      chainName: name || 'Chain',
+      chainName: name || L('Chain'),
+      // v1.4.25 — localized notification labels (see notifLabels).
+      stringsJson: JSON.stringify(notifLabels()),
+      // v1.4.25 — chain:complete only: JS reached the natural end first
+      // and the service owes the finale (see EXTRA_FINALE in the service).
+      finale: !!detail.finale,
       planJson,
       segmentStartedAtMs: segmentStartedAtMs || 0,
       tickEnabled: !!tickEnabled,
@@ -763,10 +805,10 @@
       const health = await refreshNotifHealth();
       if (health && !health.ok) {
         const parts = [];
-        if (!health.appEnabled)                parts.push('app notifications OFF');
-        if (!health.transitionsChannelEnabled) parts.push('"Chain transitions" channel OFF');
-        if (!health.completeChannelEnabled)    parts.push('"Chain complete" channel OFF');
-        toast(`⚠ Critical: ${parts.join(' · ')} — open OS Settings → Apps → Chained Timers → Notifications and re-enable.`, 'warn');
+        if (!health.appEnabled)                parts.push(L('app notifications OFF'));
+        if (!health.transitionsChannelEnabled) parts.push(L('"Chain transitions" channel OFF'));
+        if (!health.completeChannelEnabled)    parts.push(L('"Chain complete" channel OFF'));
+        toast(L('⚠ Critical: {parts} — open OS Settings → Apps → Chained Timers → Notifications and re-enable.', { parts: parts.join(' · ') }), 'warn');
       }
 
       // Battery optimisation: if the OEM has the app in "Optimized", every
@@ -813,19 +855,21 @@
 
       const isLast = i === segments.length - 1;
       const next = segments[i + 1];
+      const chainName = name || L('Chain');
+      const segOfNext = L('Segment {i} of {n}', { i: i + 2, n: segments.length });
       const title = isLast
-        ? '✓ Chain complete'
-        : `▶ ${next.name || 'segment'} · ${fmtDur(next.duration)}`;
+        ? '✓ ' + L('{name} complete', { name: chainName })
+        : `▶ ${next.name || L('segment')} · ${fmtDur(next.duration)}`;
       const body = isLast
-        ? `${name || 'Chain'} · ${segments.length} segments done`
-        : `Segment ${i + 2} of ${segments.length} · ${name || 'Chain'}`;
+        ? L('{name} · {n} segments done', { name: chainName, n: segments.length })
+        : `${segOfNext} · ${chainName}`;
       const after = !isLast ? segments[i + 2] : null;
       const largeBody = isLast
-        ? `${name || 'Chain'} complete\n${segments.length} segments done`
+        ? L('{name} complete\n{n} segments done', { name: chainName, n: segments.length })
         : [
-            `${name || 'Chain'} · Segment ${i + 2} of ${segments.length}`,
-            `${next.name || 'segment'} — ${fmtDur(next.duration)}`,
-            after ? `Up next: ${after.name || 'segment'} (${fmtDur(after.duration)})` : 'Last segment',
+            `${chainName} · ${segOfNext}`,
+            `${next.name || L('segment')} — ${fmtDur(next.duration)}`,
+            after ? L('Up next: {name} ({dur})', { name: after.name || L('segment'), dur: fmtDur(after.duration) }) : L('Last segment'),
           ].join('\n');
 
       notifs.push({
@@ -879,7 +923,7 @@
       const msg = (e && (e.message || String(e))) || 'unknown error';
       window.ChainedNativeStatus.lastSchedule = { count: 0, error: msg, when: Date.now() };
       log('schedule failed:', msg);
-      toast('Background scheduling failed: ' + msg, 'warn');
+      toast(L('Background scheduling failed: {msg}', { msg }), 'warn');
       notifyStatusChanged();
     }
   }
@@ -907,8 +951,8 @@
         await LocalNotifications.schedule({
           notifications: [{
             id: 99_000,
-            title: 'Chained Timers test',
-            body: `If you can see this, background notifications are working. Scheduled ${seconds}s ago.`,
+            title: L('Chained Timers test'),
+            body: L('If you can see this, background notifications are working. Scheduled {n}s ago.', { n: seconds }),
             schedule: { at: fireAt, allowWhileIdle: true },
             smallIcon: 'ic_stat_icon',
             iconColor: '#F5B042',
@@ -916,11 +960,11 @@
             autoCancel: true,
           }],
         });
-        toast(`Test notification scheduled for ${seconds}s. Lock the screen.`, 'good');
+        toast(L('Test notification scheduled for {n}s. Lock the screen.', { n: seconds }), 'good');
         return true;
       } catch (e) {
         const msg = (e && (e.message || String(e))) || 'unknown error';
-        toast('Test failed: ' + msg, 'warn');
+        toast(L('Test failed: {msg}', { msg }), 'warn');
         return false;
       }
     },

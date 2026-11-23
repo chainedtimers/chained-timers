@@ -53,6 +53,7 @@ The original idea — *"chained, snooze-free interval timers"* — comes from **
 - **Pre-start countdown · final-3-second tick · long-press skip · instant pause.** All the controls a sweaty thumb needs.
 - **Fully offline once installed.** Your library lives in `localStorage`, exportable to JSON.
 - **No account, no tracking, no analytics.** Open the app, get to work.
+- **English and French.** Follows your device language; switch any time in Settings.
 
 ---
 
@@ -253,6 +254,7 @@ Everything is on by default — turn off what you don't want.
 - **Pre-start countdown** — 3-2-1 before the first segment.
 - **Final 3 seconds tick** — short ticks to mark the segment ending.
 - **Notifications** — system notification at each transition (must be granted).
+- **Language** — Auto (follows the device), English or Français. Templates are translated too.
 - **Export / Import library** — JSON, no account required.
 
 ---

@@ -226,6 +226,15 @@ const final3 = renderFinalThree();
 normalize(final3);
 await writeAll(final3, 'final3.wav');
 
+// v1.4.25 — one second of digital silence, looped by the FGS as an audio
+// "primer" from ~5s before each boundary until just after it. An idle
+// output path goes to standby after a few seconds (and a Bluetooth A2DP
+// link suspends its stream); the first sound after that is delayed or
+// clipped while the path wakes up — reported as a 3-2-1 that only got
+// to "3-2" before the next segment's name. Playing silence keeps the
+// path awake so final3 / chime / voice start on time. Android only.
+await writeWav(new Float32Array(SAMPLE_RATE), path.join(ANDROID_RAW_DIR, 'silence.wav'));
+
 if (!includeIos) {
   console.log(`(ios/ not present — skipped iOS bundle copies; run again after \`npx cap add ios\`)`);
 }

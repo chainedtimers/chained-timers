@@ -4,7 +4,8 @@
 //
 //   1. Engine.startChain x2 = two active runs, focus follows the first.
 //   2. Engine.focus(id) swaps which run drives the big timer.
-//   3. Cap: a third Engine.startChain bounces with a toast.
+//   3. Cap: up to MAX_CONCURRENT_RUNS (5, since v1.4.4) start; one more
+//      bounces with a toast.
 //   4. Engine.startMany([a, b]) starts both with the same segmentStartedAtMs.
 //   5. When the focused run completes naturally, the second run is promoted
 //      to focused and the run view stays visible.
@@ -69,6 +70,12 @@ const SEED = {
       ],
       createdAt: 1700000000000, updatedAt: 1700000000000,
     },
+    // Fillers to reach the concurrent-run cap in Test 3.
+    ...['d', 'e', 'f'].map(x => ({
+      id: `c_${x}`, name: `${x.toUpperCase()}-chain`, color: 'sage', loops: 1,
+      segments: [{ id: `${x}1`, kind: 'segment', name: `${x.toUpperCase()}-One`, duration: 10, color: 'sage' }],
+      createdAt: 1700000000000, updatedAt: 1700000000000,
+    })),
   ],
   settings: {
     sound: false, voice: false, vibrate: false, prestart: false, finalTick: false,
@@ -114,16 +121,25 @@ console.log('\nTest 2: Engine.focus(id) swaps which run drives the big timer');
   eq(r.chainName, 'Bravo-chain', 'Engine.chain reads from focused run');
 }
 
-console.log('\nTest 3: cap at 2 — third startChain returns false');
+console.log('\nTest 3: cap at 5 — up to five run, a sixth startChain returns false');
 {
   const r = await page.evaluate(() => {
     const { Engine, Store } = window.ChainedApp;
-    const c = Store.getChain('c_c');
-    const ok = Engine.startChain(c);
-    return { ok, count: Engine.activeRunningCount() };
+    const upTo5 = ['c_c', 'c_d', 'c_e'].map(id => Engine.startChain(Store.getChain(id)));
+    const countAt5 = Engine.activeRunningCount();
+    const sixth = Engine.startChain(Store.getChain('c_f'));
+    const countAfter = Engine.activeRunningCount();
+    const toast = [...document.querySelectorAll('#toast-stack .toast')].pop()?.textContent || '';
+    // Back to the two runs the following tests expect.
+    ['c_c', 'c_d', 'c_e'].forEach(id => Engine.stopRun(id));
+    return { upTo5, countAt5, sixth, countAfter, toast, left: Engine.activeRunningCount() };
   });
-  eq(r.ok,    false, 'third startChain refused');
-  eq(r.count, 2,     'active count stays at 2');
+  eq(r.upTo5,      [true, true, true], 'third to fifth startChain accepted');
+  eq(r.countAt5,   5,     'active count at the cap');
+  eq(r.sixth,      false, 'sixth startChain refused');
+  eq(r.countAfter, 5,     'active count stays at 5');
+  /already running/.test(r.toast) ? ok(`toast: ${r.toast}`) : bad(`no cap toast (got "${r.toast}")`);
+  eq(r.left,       2,     'back to two runs');
 }
 
 console.log('\nTest 4: Engine.startMany([a, b]) synced start');

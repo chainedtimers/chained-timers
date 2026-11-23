@@ -172,7 +172,7 @@ console.log('\nTest 6: "Not really" opens a prefilled GitHub issue, not the Stor
   await page.waitForTimeout(200);
   const r = await page.evaluate(() => ({ opened: window.__opened, calls: window.__reviewCalls }));
   const url = r.opened[0] || '';
-  if (/github\.com\/mayerwin\/Chained-Timers\/issues\/new/.test(url)) ok('routed to a GitHub issue');
+  if (/github\.com\/chainedtimers\/chained-timers\/issues\/new/.test(url)) ok('routed to a GitHub issue');
   else bad(`unexpected destination: ${url}`);
   if (!/play\.google\.com/.test(url)) ok('never sent to the Play listing');
   else bad('negative feedback sent to the Store');

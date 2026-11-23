@@ -1,5 +1,6 @@
-v1.4.24 — Continue, and a countdown on the beat
+v1.4.25 — 3-2-1 in sync, French, naming
 
-• A ringing timer that has more segments after it now says Continue, in the app and in the notification. At the end of the chain it still says Dismiss, and the notification no longer shows Stop chain beside it.
-• Fixed: the final 3-2-1 tick now beeps on 3, 2 and 1 even in segments of 3 seconds or less, instead of starting late and beeping on 0.
-• Fixed: a stray extra beep when a chain starts.
+• The 3-2-1 countdown now lands on 3, 2 and 1 every time. The audio is woken up before it starts (a late first beep, worst over Bluetooth, made it sound like "3-2" then the next segment), and the end-of-segment chime and finale always play.
+• Name a segment right in the duration screen as you create it.
+• French translation: follows your phone, or pick it in Settings → Language.
+• Labels no longer get cut off with a larger system font.
